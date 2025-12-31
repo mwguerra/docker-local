@@ -3,7 +3,7 @@
     "description": "Complete Docker development environment for Laravel - PHP 8.4, MySQL 9.1, PostgreSQL 17, Redis 8, Traefik 3.6",
     "type": "library",
     "license": "MIT",
-    "version": "2.0.0",
+    "version": "0.1.0",
     "authors": [
         {
             "name": "MWGuerra",
