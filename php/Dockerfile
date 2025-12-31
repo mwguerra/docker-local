@@ -129,6 +129,17 @@ RUN apk add --no-cache nodejs npm
 # Instalar Yarn
 RUN npm install -g yarn
 
+# Instalar fcgi para healthcheck
+RUN apk add --no-cache fcgi
+
+# Instalar php-fpm-healthcheck script
+RUN wget -O /usr/local/bin/php-fpm-healthcheck \
+    https://raw.githubusercontent.com/renatomefi/php-fpm-healthcheck/master/php-fpm-healthcheck \
+    && chmod +x /usr/local/bin/php-fpm-healthcheck
+
+# Habilitar php-fpm status page para healthcheck
+RUN set -xe && echo "pm.status_path = /status" >> /usr/local/etc/php-fpm.d/zz-docker.conf
+
 # Criar grupo e usuário para evitar problemas de permissão
 RUN addgroup -g ${GID} laravel && \
     adduser -D -u ${UID} -G laravel laravel && \

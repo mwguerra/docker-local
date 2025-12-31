@@ -1,5 +1,3 @@
-version: "3.8"
-
 # ==============================================================================
 # Laravel Docker Development Environment - 2025 Edition
 # Versões: PHP 8.4, MySQL 9.1/8.4 LTS, PostgreSQL 17, Redis 8, Traefik 3.6
@@ -84,6 +82,12 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "php-fpm-healthcheck || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # ============================================================================
   # NGINX - Servidor Web (Alpine latest)
@@ -98,7 +102,8 @@ services:
     networks:
       - laravel-dev
     depends_on:
-      - php
+      php:
+        condition: service_healthy
     labels:
       - "traefik.enable=true"
       # Rota principal para *.localhost
@@ -358,7 +363,7 @@ services:
       - laravel-dev
     tty: true
     stdin_open: true
-    command: sh -c "echo 'Node.js container ready. Use: docker-compose exec node npm run dev' && tail -f /dev/null"
+    command: ["sh", "-c", "echo 'Node.js container ready' && tail -f /dev/null"]
 
 volumes:
   mysql_data:
