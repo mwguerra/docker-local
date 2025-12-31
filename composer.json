@@ -60,12 +60,14 @@
     "scripts": {
         "test": "pest",
         "test:coverage": "pest --coverage",
-        "test:parallel": "pest --parallel"
+        "test:parallel": "pest --parallel",
+        "release": "bash scripts/release.sh"
     },
     "scripts-descriptions": {
         "test": "Run the test suite with Pest",
         "test:coverage": "Run tests with code coverage",
-        "test:parallel": "Run tests in parallel"
+        "test:parallel": "Run tests in parallel",
+        "release": "Create and push a new git tag release"
     },
     "extra": {
         "laravel": {
