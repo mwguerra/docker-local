@@ -13,3 +13,6 @@ projects/
 
 # Docker
 docker-compose.override.yml
+
+# Dependencies
+composer.lock
