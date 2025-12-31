@@ -28,6 +28,8 @@ Complete Docker development environment for Laravel with a powerful CLI.
   - [macOS](#macos)
   - [Windows (WSL2)](#windows-wsl2)
 - [Quick Start](#quick-start)
+  - [New Project](#new-project)
+  - [Existing Project](#existing-project)
 - [CLI Commands](#cli-commands)
 - [Configuration](#configuration)
   - [Directory Structure](#directory-structure)
@@ -38,6 +40,10 @@ Complete Docker development environment for Laravel with a powerful CLI.
 - [Services](#services)
 - [Optional Services](#optional-services)
 - [Multi-Project Support](#multi-project-support)
+  - [What Gets Created Automatically](#what-gets-created-automatically)
+  - [Automatic Isolation Details](#automatic-isolation-details)
+  - [Redis Database Allocation](#redis-database-allocation)
+  - [Running Multiple Projects Simultaneously](#running-multiple-projects-simultaneously)
 - [Migrating from Project-Specific Docker](#migrating-from-project-specific-docker)
 - [IDE Integration](#ide-integration)
 - [Troubleshooting](#troubleshooting)
@@ -182,9 +188,14 @@ code ~/projects/my-project
 
 ## Quick Start
 
+### New Project
+
 ```bash
-# Create a new Laravel project
+# Create a new Laravel project (everything is configured automatically)
 docker-local make:laravel my-app
+
+# With PostgreSQL instead of MySQL
+docker-local make:laravel my-app --postgres
 
 # Navigate to project
 cd ~/projects/my-app
@@ -203,6 +214,88 @@ docker-local logs:laravel
 # Stop environment
 docker-local down
 ```
+
+### Existing Project
+
+If you have an existing Laravel project, copy it to `~/projects/` and configure it:
+
+```bash
+# 1. Copy your project to the projects directory
+cp -r /path/to/existing-project ~/projects/my-existing-app
+
+# 2. Navigate to the project
+cd ~/projects/my-existing-app
+
+# 3. Create the database
+docker-local db:create my_existing_app
+
+# 4. Update your .env file with docker-local settings
+```
+
+**Required `.env` changes for existing projects:**
+
+```bash
+# Database - use Docker service names, not localhost
+DB_HOST=mysql                    # or 'postgres' for PostgreSQL
+DB_PORT=3306                     # or 5432 for PostgreSQL
+DB_DATABASE=my_existing_app      # your project's database name
+DB_USERNAME=laravel
+DB_PASSWORD=secret
+
+# Redis - use Docker service name
+REDIS_HOST=redis
+REDIS_PORT=6379
+
+# IMPORTANT: Unique isolation values (prevent conflicts with other projects)
+CACHE_PREFIX=my_existing_app_
+REDIS_CACHE_DB=0                 # Use different numbers if you have multiple projects
+REDIS_SESSION_DB=1               # Project 1: 0-2, Project 2: 3-5, etc.
+REDIS_QUEUE_DB=2
+
+# Mail - use Mailpit
+MAIL_HOST=mailpit
+MAIL_PORT=1025
+
+# MinIO/S3 (optional)
+AWS_ENDPOINT=http://minio:9000
+AWS_ACCESS_KEY_ID=minio
+AWS_SECRET_ACCESS_KEY=minio123
+AWS_BUCKET=my_existing_app
+AWS_USE_PATH_STYLE_ENDPOINT=true
+```
+
+**Quick setup script for existing projects:**
+
+```bash
+# Create database
+docker-local db:create my_existing_app
+
+# Create MinIO bucket (optional)
+docker exec minio mc mb local/my_existing_app --ignore-existing
+
+# Install dependencies
+docker exec -w /var/www/my-existing-app php composer install
+
+# Generate key if needed
+docker exec -w /var/www/my-existing-app php php artisan key:generate
+
+# Run migrations
+docker exec -w /var/www/my-existing-app php php artisan migrate
+
+# Open in browser
+docker-local open my-existing-app
+```
+
+**Checklist for existing projects:**
+
+- [ ] Project copied to `~/projects/<name>/`
+- [ ] Database created (`docker-local db:create <name>`)
+- [ ] `.env` updated with Docker service names (`mysql`, `redis`, `mailpit`)
+- [ ] Unique `CACHE_PREFIX` set (e.g., `myproject_`)
+- [ ] Unique `REDIS_*_DB` numbers assigned (if running multiple projects)
+- [ ] Dependencies installed (`composer install`)
+- [ ] Migrations run (`php artisan migrate`)
+- [ ] Host added to `/etc/hosts` or dnsmasq configured
 
 ## CLI Commands
 
@@ -232,7 +325,8 @@ docker-local clean             # Clean caches and unused Docker resources
 
 ```bash
 docker-local list              # List all Laravel projects
-docker-local make:laravel NAME # Create new Laravel project
+docker-local make:laravel NAME # Create new Laravel project (MySQL, full isolation)
+docker-local make:laravel NAME --postgres  # Create with PostgreSQL + pgvector
 docker-local clone REPO        # Clone and setup existing project
 docker-local open [name]       # Open project in browser
 docker-local open --mail       # Open Mailpit
@@ -240,6 +334,14 @@ docker-local open --minio      # Open MinIO Console
 docker-local open --traefik    # Open Traefik Dashboard
 docker-local ide [editor]      # Open in IDE (code, phpstorm)
 ```
+
+**`make:laravel` creates everything automatically:**
+- Laravel project via Composer
+- Database (MySQL or PostgreSQL) + testing database
+- MinIO bucket for file storage
+- Unique Redis DB numbers for cache/session/queue
+- Unique cache prefix and Reverb credentials
+- Configured `.env` with all Docker service connections
 
 ### Development Commands
 
@@ -722,17 +824,76 @@ Available templates:
 
 ## Multi-Project Support
 
-docker-local supports multiple Laravel projects sharing the same Docker services. Each project gets automatic isolation through unique identifiers.
+docker-local supports multiple Laravel projects sharing the same Docker services. Each project gets **complete automatic isolation** to prevent data leakage between projects.
 
-### Automatic Isolation
+### What Gets Created Automatically
 
-When you create a project with `docker-local make:laravel`, unique values are generated:
+When you create a project with `docker-local make:laravel myapp`, everything is set up automatically:
 
-| Variable | Purpose | Example |
-|----------|---------|---------|
-| `CACHE_PREFIX` | Isolates cache between projects | `blog_cache_` |
-| `REVERB_APP_ID` | Unique WebSocket app ID | `847291` |
-| `REVERB_APP_KEY` | WebSocket authentication | `abc123...` |
+```
+Creating Laravel project: myapp
+Database: MySQL
+Redis DBs: cache=0, session=1, queue=2
+
+✓ Project created successfully!
+✓ MySQL database 'myapp' created
+✓ MySQL database 'myapp_testing' created
+✓ MinIO bucket 'myapp' created
+✓ .env configured with complete isolation
+
+Isolation settings (multi-project):
+  ✓ Database: myapp (MySQL)
+  ✓ Redis Cache DB: 0
+  ✓ Redis Session DB: 1
+  ✓ Redis Queue DB: 2
+  ✓ Cache Prefix: myapp_
+  ✓ MinIO Bucket: myapp
+  ✓ Reverb App ID: 847291
+```
+
+### Automatic Isolation Details
+
+| Resource | How It's Isolated | Example Value |
+|----------|-------------------|---------------|
+| **Database** | Unique DB per project | `myapp`, `myapp_testing` |
+| **Redis Cache** | Separate Redis DB number | `REDIS_CACHE_DB=0` |
+| **Redis Session** | Separate Redis DB number | `REDIS_SESSION_DB=1` |
+| **Redis Queue** | Separate Redis DB number | `REDIS_QUEUE_DB=2` |
+| **Cache Prefix** | Unique prefix per project | `CACHE_PREFIX=myapp_` |
+| **MinIO Bucket** | Separate S3 bucket | `AWS_BUCKET=myapp` |
+| **Reverb/WebSockets** | Unique credentials | Random `REVERB_APP_ID/KEY/SECRET` |
+| **Horizon Prefix** | Unique queue prefix | `HORIZON_PREFIX=myapp_horizon:` |
+
+### Redis Database Allocation
+
+Redis has 16 databases (0-15). Each project uses 3 databases:
+
+| Project | Cache DB | Session DB | Queue DB |
+|---------|----------|------------|----------|
+| 1st project | 0 | 1 | 2 |
+| 2nd project | 3 | 4 | 5 |
+| 3rd project | 6 | 7 | 8 |
+| 4th project | 9 | 10 | 11 |
+| 5th project | 12 | 13 | 14 |
+
+This allows up to 5 fully isolated projects. Beyond that, DB numbers wrap around (with a warning).
+
+### PostgreSQL vs MySQL
+
+Both database engines are available. Use the `--postgres` flag:
+
+```bash
+# MySQL (default)
+docker-local make:laravel myapp
+
+# PostgreSQL with pgvector
+docker-local make:laravel myapp --postgres
+```
+
+PostgreSQL projects automatically get these extensions:
+- `uuid-ossp` - UUID generation
+- `pgcrypto` - Cryptographic functions
+- `vector` - pgvector for AI embeddings
 
 ### Conflict Detection
 
@@ -754,6 +915,31 @@ Example conflict output:
   Why: Cache data will be shared/corrupted between projects
   Fix: Change CACHE_PREFIX in one of the projects' .env files
 ```
+
+### Running Multiple Projects Simultaneously
+
+All projects can run at the same time without conflicts:
+
+```bash
+# Terminal 1 - Work on blog
+cd ~/projects/blog
+docker-local tinker
+
+# Terminal 2 - Work on api
+cd ~/projects/api
+docker-local test
+
+# Terminal 3 - Work on admin
+cd ~/projects/admin
+docker-local queue:work
+```
+
+Each project has its own:
+- Database (no shared tables)
+- Cache (no key collisions)
+- Sessions (users stay logged in to their project)
+- Queues (jobs don't mix between projects)
+- File storage (separate MinIO buckets)
 
 ## Migrating from Project-Specific Docker
 
