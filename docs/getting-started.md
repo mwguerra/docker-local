@@ -1,72 +1,227 @@
 # Getting Started
 
-Complete guide to installing and setting up the Laravel Docker Development Environment.
+Complete guide to installing and setting up **docker-local** (`mwguerra/docker-local`), a global Composer package that provides a complete Docker development environment for Laravel.
+
+## What is docker-local?
+
+**docker-local** is a CLI tool you install once globally on your machine. It manages a shared Docker environment for all your Laravel projects — no need to configure Docker files in each project.
+
+**Key benefits:**
+- Install once, use for all projects
+- 50+ commands for common Laravel tasks
+- Automatic project isolation (databases, cache, sessions)
+- Works on Linux, macOS, and Windows (WSL2)
+
+---
+
+## Quick Install (TL;DR)
+
+If you already have Docker, PHP 8.2+, and Composer installed:
+
+```bash
+composer global require mwguerra/docker-local
+export PATH="$HOME/.composer/vendor/bin:$PATH"
+docker-local init
+docker-local make:laravel my-first-app
+```
+
+Your app is now running at `https://my-first-app.test`!
+
+---
 
 ## Prerequisites
 
 ### Required Software
 
-| Software | Minimum Version | Check Command |
-|----------|----------------|---------------|
-| Docker | 24.0+ | `docker --version` |
-| Docker Compose | 2.20+ | `docker compose version` |
-| PHP | 8.2+ | `php --version` |
-| Composer | 2.6+ | `composer --version` |
+Before installing docker-local, you need these tools on your system:
+
+| Software | Minimum Version | Check Command | Purpose |
+|----------|----------------|---------------|---------|
+| Docker | 24.0+ | `docker --version` | Runs the containers |
+| Docker Compose | 2.20+ | `docker compose version` | Orchestrates services |
+| PHP | 8.2+ | `php --version` | Runs the CLI tool |
+| Composer | 2.6+ | `composer --version` | Installs the package |
+
+**Don't have these installed?** See platform-specific guides below:
+- [Linux Installation](#installing-prerequisites-on-linux)
+- [macOS Installation](#installing-prerequisites-on-macos)
+- [Windows/WSL2 Installation](#installing-prerequisites-on-windows-wsl2)
 
 ### System Requirements
 
-- **OS:** Linux (Ubuntu 22.04+, Debian 12+, Fedora 38+, Arch), macOS 12+, or Windows (WSL2)
+- **OS:** Linux (Ubuntu 22.04+, Debian 12+, Fedora 38+, Arch), macOS 12+, or Windows 10/11 (WSL2 required)
 - **RAM:** 8GB minimum, 16GB recommended
 - **Disk:** 20GB free space
+- **CPU:** 64-bit processor with virtualization support (VT-x/AMD-V)
+
+---
 
 ## Installation
 
-### Step 1: Install via Composer
+### Step 1: Install docker-local via Composer
 
-Install the package globally using Composer:
+Install the package globally using Composer's `global require` command:
 
 ```bash
 composer global require mwguerra/docker-local
 ```
 
-### Step 2: Add Composer to PATH
+This downloads the package to `~/.composer/vendor/mwguerra/docker-local/`.
 
-Ensure Composer's global bin directory is in your PATH. Add to your `~/.bashrc` or `~/.zshrc`:
+### Step 2: Add Composer's Global Bin to PATH
 
+Composer installs executable scripts to a global bin directory. You need to add this to your PATH so you can run `docker-local` from anywhere.
+
+**Find your Composer bin path:**
 ```bash
-export PATH="$HOME/.composer/vendor/bin:$PATH"
+composer global config bin-dir --absolute
+# Usually: /home/<user>/.composer/vendor/bin (Linux)
+# Or: /Users/<user>/.composer/vendor/bin (macOS)
 ```
 
-Reload your shell:
+**Add to your shell configuration:**
+
+For **Bash** (most Linux systems), add to `~/.bashrc`:
 ```bash
-source ~/.bashrc  # or source ~/.zshrc
+echo 'export PATH="$HOME/.composer/vendor/bin:$PATH"' >> ~/.bashrc
+source ~/.bashrc
 ```
 
-### Step 3: Run Initial Setup
+For **Zsh** (macOS default), add to `~/.zshrc`:
+```bash
+echo 'export PATH="$HOME/.composer/vendor/bin:$PATH"' >> ~/.zshrc
+source ~/.zshrc
+```
+
+**Verify it works:**
+```bash
+docker-local --version
+# Should output: docker-local 2.x.x
+```
+
+### Step 3: Initialize the Environment
+
+Run the setup wizard:
 
 ```bash
 docker-local init
 ```
 
 This command performs:
-- Configuration directory creation (`~/.config/docker-local/`)
-- Default config and .env file generation
-- Docker image building
-- SSL certificate generation (via mkcert)
-- Container startup
-- Health checks
+- Creates configuration directory (`~/.config/docker-local/`)
+- Generates default config and .env files
+- Builds Docker images (PHP, databases, etc.)
+- Generates SSL certificates for HTTPS (via mkcert)
+- Starts all containers
+- Runs health checks
+
+**First run takes 5-10 minutes** as Docker downloads base images.
 
 ### Step 4: Configure DNS (Optional but Recommended)
 
-For `.test` domain resolution:
+For automatic `.test` domain resolution (so `https://my-app.test` works):
 
 ```bash
-# Option A: DNS server (recommended for wildcards)
+# Option A: Automatic DNS (recommended)
+# Sets up dnsmasq to resolve all *.test domains
 sudo docker-local setup:dns
 
 # Option B: Manual /etc/hosts entries
+# Adds specific hostnames to /etc/hosts
 sudo docker-local setup:hosts
 ```
+
+---
+
+## Installing Prerequisites
+
+### Installing Prerequisites on Linux
+
+**Ubuntu/Debian:**
+
+```bash
+# Update package list
+sudo apt update
+
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+sudo usermod -aG docker $USER
+newgrp docker
+
+# Install PHP and extensions
+sudo apt install php8.3 php8.3-{cli,curl,mbstring,xml,zip} unzip
+
+# Install Composer
+curl -sS https://getcomposer.org/installer | php
+sudo mv composer.phar /usr/local/bin/composer
+
+# Verify installations
+docker --version
+php --version
+composer --version
+```
+
+**Fedora:**
+
+```bash
+sudo dnf install docker docker-compose php php-cli php-curl php-mbstring php-xml php-zip composer
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+```
+
+**Arch Linux:**
+
+```bash
+sudo pacman -S docker docker-compose php composer
+sudo systemctl enable --now docker
+sudo usermod -aG docker $USER
+```
+
+### Installing Prerequisites on macOS
+
+```bash
+# Install Homebrew (if not installed)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+# Install Docker Desktop
+brew install --cask docker
+# Open Docker Desktop from Applications to complete setup
+
+# Install PHP and Composer
+brew install php composer
+
+# Verify installations
+docker --version
+php --version
+composer --version
+```
+
+### Installing Prerequisites on Windows (WSL2)
+
+**docker-local requires WSL2** — it does not run on native Windows.
+
+**Step 1: Install WSL2 (PowerShell as Administrator):**
+```powershell
+wsl --install -d Ubuntu
+```
+Restart your computer when prompted.
+
+**Step 2: Install Docker Desktop for Windows:**
+1. Download from [docker.com](https://www.docker.com/products/docker-desktop/)
+2. During installation, check "Use WSL 2 based engine"
+3. After installation: Settings → Resources → WSL Integration → Enable Ubuntu
+
+**Step 3: Install PHP and Composer in WSL2 (Ubuntu terminal):**
+```bash
+sudo apt update
+sudo apt install php8.3 php8.3-{cli,curl,mbstring,xml,zip} unzip
+curl -sS https://getcomposer.org/installer | php
+sudo mv composer.phar /usr/local/bin/composer
+```
+
+Now continue with the main [Installation](#installation) steps above.
+
+---
 
 ## Directory Structure
 

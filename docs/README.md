@@ -1,16 +1,18 @@
-# Laravel Docker Development Environment - Documentation
+# docker-local Documentation
 
-Complete documentation for the Laravel Docker Development Environment.
+Complete documentation for **docker-local** (`mwguerra/docker-local`), a global Composer package that provides a complete Docker development environment for Laravel.
 
 ## Overview
 
-This is a **production-ready local development stack** for Laravel that:
+**docker-local** is a **production-ready local development stack** for Laravel that:
+- Installs globally via Composer — no per-project Docker files needed
 - Replaces Laravel Valet (especially for Linux)
-- Provides complete Docker containerization
+- Provides complete Docker containerization with 50+ CLI commands
 - Supports HTTPS/SSL with system-trusted certificates
 - Enables multiple simultaneous projects with custom domains
-- Includes wildcard subdomain support
+- Includes wildcard subdomain support and automatic project isolation
 
+**Package:** `mwguerra/docker-local`
 **Version:** 2.0.0
 **License:** MIT
 
@@ -52,11 +54,11 @@ This is a **production-ready local development stack** for Laravel that:
 ## Quick Start
 
 ```bash
-# 1. Clone the repository
-git clone <repo-url> ~/docker-environment && cd ~/docker-environment
+# 1. Install globally via Composer
+composer global require mwguerra/docker-local
 
-# 2. Install CLI globally
-./scripts/install-cli.sh
+# 2. Add to PATH (add to ~/.bashrc or ~/.zshrc for persistence)
+export PATH="$HOME/.composer/vendor/bin:$PATH"
 
 # 3. Run complete setup
 docker-local init
@@ -68,26 +70,31 @@ docker-local make:laravel my-project
 # https://my-project.test
 ```
 
+See [Getting Started](getting-started.md) for detailed installation instructions for all platforms.
+
 ## Directory Structure
 
-```
-~/docker-environment/           # Docker environment
-├── bin/docker-local            # CLI (50+ commands)
-├── docker-compose.yml          # Service definitions
-├── php/                        # PHP configuration
-├── nginx/                      # Nginx configuration
-├── mysql/                      # MySQL configuration
-├── postgres/                   # PostgreSQL configuration
-├── redis/                      # Redis configuration
-├── traefik/                    # Traefik configuration
-├── scripts/                    # Helper scripts
-├── templates/                  # Project templates
-└── docs/                       # Documentation
+docker-local uses three locations on your system:
 
-~/projects/                     # Your Laravel projects
-├── blog/                       → https://blog.test
-├── api/                        → https://api.test
-└── shop/                       → https://shop.test
+```
+~/.composer/vendor/mwguerra/docker-local/  # Package (Composer managed)
+├── bin/docker-local                       # CLI entry point
+├── src/                                   # PHP classes
+├── docker-compose.yml                     # Service definitions
+├── php/, nginx/, mysql/, ...              # Docker configurations
+├── scripts/                               # Helper scripts
+└── docs/                                  # Documentation
+
+~/.config/docker-local/                    # Your configuration (persistent)
+├── config.json                            # Custom settings
+├── .env                                   # Environment variables
+├── certs/                                 # SSL certificates
+└── docker-compose.override.yml            # Optional custom services
+
+~/projects/                                # Your Laravel projects
+├── blog/                                  → https://blog.test
+├── api/                                   → https://api.test
+└── shop/                                  → https://shop.test
 ```
 
 ## System Requirements

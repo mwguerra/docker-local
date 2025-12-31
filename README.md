@@ -2,8 +2,36 @@
 
 Complete Docker development environment for Laravel with a powerful CLI.
 
+[![Packagist Version](https://img.shields.io/packagist/v/mwguerra/docker-local.svg)](https://packagist.org/packages/mwguerra/docker-local)
 [![PHP Version](https://img.shields.io/badge/PHP-8.2%2B-blue.svg)](https://www.php.net/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+
+> **Global Composer Package** — Install once, use everywhere. No per-project Docker configuration needed.
+
+## Quick Install
+
+**For experienced developers** — get up and running in 60 seconds:
+
+```bash
+# Install globally via Composer
+composer global require mwguerra/docker-local
+
+# Add to PATH (add this line to ~/.bashrc or ~/.zshrc for persistence)
+export PATH="$HOME/.composer/vendor/bin:$PATH"
+
+# Initialize the environment
+docker-local init
+
+# Create your first Laravel project
+docker-local make:laravel my-app
+
+# Open in browser (https://my-app.test)
+docker-local open
+```
+
+**Need prerequisites first?** See [Installation](#installation) for platform-specific setup guides.
+
+---
 
 ## Features
 
@@ -22,6 +50,7 @@ Complete Docker development environment for Laravel with a powerful CLI.
 
 ## Table of Contents
 
+- [Quick Install](#quick-install)
 - [Requirements](#requirements)
 - [Installation](#installation)
   - [Linux](#linux)
