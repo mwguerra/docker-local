@@ -11,5 +11,7 @@ projects/
 # Logs
 *.log
 
+/vendor
+
 # Docker
 docker-compose.override.yml
