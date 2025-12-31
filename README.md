@@ -31,6 +31,9 @@ Complete Docker development environment for Laravel with a powerful CLI.
 - [CLI Commands](#cli-commands)
 - [Configuration](#configuration)
   - [Directory Structure](#directory-structure)
+  - [Package Structure (Source Code)](#package-structure-source-code)
+  - [User Configuration](#user-configuration-configdocker-local)
+  - [Projects Directory](#projects-directory-projects)
   - [Understanding Environment Files](#understanding-environment-files)
 - [Services](#services)
 - [Optional Services](#optional-services)
@@ -369,26 +372,152 @@ Configuration is stored in `~/.config/docker-local/config.json`:
 
 ### Directory Structure
 
+docker-local operates across three locations:
+
 ```
-~/.composer/vendor/mwguerra/docker-local/   # Package (Composer managed)
-├── bin/docker-local                        # CLI entry point
-├── src/                                    # PHP classes
-├── lib/                                    # Bash helpers
-├── resources/docker/                       # Default Docker files
-├── scripts/                                # Helper scripts
-├── stubs/                                  # Configuration templates
-└── tests/                                  # Pest tests
-
-~/.config/docker-local/                     # User configuration
-├── config.json                             # Custom settings
-├── .env                                    # Environment variables
-├── certs/                                  # SSL certificates
-└── docker-compose.override.yml             # Optional: user overrides
-
+~/.composer/vendor/mwguerra/docker-local/   # Package source (Composer managed)
+~/.config/docker-local/                     # User configuration (persistent)
 ~/projects/                                 # Your Laravel projects
-├── blog/                                   → https://blog.test
-├── api/                                    → https://api.test
-└── shop/                                   → https://shop.test
+```
+
+### Package Structure (Source Code)
+
+```
+docker-local/
+├── bin/
+│   └── docker-local              # CLI entry point (symfony/console)
+│
+├── src/                          # PHP application code
+│   ├── Commands/                 # CLI command classes
+│   ├── Config/
+│   │   ├── ConfigManager.php     # Loads/saves config.json
+│   │   ├── ConfigValidator.php   # Validates configuration
+│   │   └── PathResolver.php      # Resolves ~ and relative paths
+│   ├── DockerLocal.php           # Main application class
+│   └── cli-helper.php            # Helper functions for CLI
+│
+├── lib/
+│   └── config.sh                 # Bash helper functions
+│
+├── scripts/                      # Shell scripts for operations
+│   ├── setup.sh                  # Initial environment setup
+│   ├── new-project.sh            # Create new Laravel project
+│   ├── generate-certs.sh         # SSL certificate generation
+│   ├── setup-dns.sh              # Configure dnsmasq for *.test
+│   ├── setup-hosts.sh            # Add entries to /etc/hosts
+│   ├── create-database.sh        # Create MySQL/PostgreSQL databases
+│   ├── make-env.sh               # Generate .env files
+│   ├── artisan.sh                # Run artisan commands in container
+│   ├── composer.sh               # Run composer in container
+│   ├── status.sh                 # Show service status
+│   ├── test-connections.sh       # Test database/redis connections
+│   ├── add-host.sh               # Add single host entry
+│   └── install-cli.sh            # Install CLI globally
+│
+├── stubs/                        # Templates with placeholders
+│   ├── .env.stub                 # Docker environment template
+│   ├── laravel.env.stub          # Laravel .env template ({{PROJECT_NAME}})
+│   ├── config.json.stub          # Default configuration
+│   └── docker-compose.override.yml.stub  # Override template
+│
+├── templates/
+│   ├── install.sh                # Installation script template
+│   └── hooks/
+│       ├── pre-install.sh        # Runs before project install
+│       └── post-install.sh       # Runs after project install
+│
+├── tests/                        # Pest PHP tests
+│   ├── Pest.php                  # Pest configuration
+│   ├── Unit/
+│   │   ├── ConfigManagerTest.php
+│   │   ├── ConfigValidatorTest.php
+│   │   └── PathResolverTest.php
+│   └── Feature/                  # (Integration tests)
+│
+├── docs/                         # Extended documentation
+│   ├── README.md                 # Docs index
+│   ├── architecture.md           # System architecture
+│   ├── cli-reference.md          # Full CLI documentation
+│   ├── getting-started.md        # Quick start guide
+│   ├── services.md               # Service configuration
+│   ├── templates.md              # Template system docs
+│   └── troubleshooting.md        # Common issues
+│
+├── resources/docker/             # Alternative/reference Docker files
+│   └── docker-compose.yml        # Reference compose file
+│
+│── Docker Service Configurations ─────────────────────────────
+│
+├── docker-compose.yml            # Main orchestration file
+├── .env.example                  # Docker environment template
+├── laravel.env.example           # Laravel .env template (manual use)
+│
+├── php/                          # PHP-FPM container
+│   ├── Dockerfile                # PHP 8.4 with extensions
+│   ├── php.ini                   # PHP configuration
+│   └── xdebug.ini                # Xdebug settings
+│
+├── php-ai/                       # PHP + AI tools container
+│   ├── Dockerfile                # PHP with Whisper/FFmpeg
+│   └── php-ai.ini                # AI container PHP config
+│
+├── nginx/
+│   └── default.conf              # Dynamic multi-project routing
+│
+├── mysql/
+│   ├── my.cnf                    # MySQL configuration
+│   └── init/
+│       └── 01-create-databases.sql  # Runs on first start
+│
+├── postgres/
+│   └── init/
+│       └── 01-create-databases.sql  # Creates DBs + pgvector
+│
+├── redis/
+│   └── redis.conf                # Redis configuration
+│
+├── traefik/
+│   └── dynamic/
+│       └── tls.yml               # TLS/SSL configuration
+│
+├── rtmp/
+│   └── nginx-rtmp.conf           # RTMP streaming config
+│
+│── Root Files ─────────────────────────────────────────────────
+│
+├── composer.json                 # PHP dependencies
+├── composer.lock                 # Locked versions
+├── LICENSE                       # MIT License
+├── README.md                     # This file
+└── PRD.md                        # Product requirements document
+```
+
+### User Configuration (~/.config/docker-local/)
+
+Created by `docker-local init`, persists across updates:
+
+```
+~/.config/docker-local/
+├── config.json                   # Your custom settings (ports, paths, etc.)
+├── .env                          # Active Docker environment variables
+├── certs/                        # SSL certificates (mkcert generated)
+│   ├── localhost.pem
+│   └── localhost-key.pem
+└── docker-compose.override.yml   # Optional: your custom services
+```
+
+### Projects Directory (~/projects/)
+
+Each Laravel project is automatically accessible via HTTPS:
+
+```
+~/projects/
+├── blog/                         → https://blog.test
+│   ├── .env                      # Project-specific Laravel config
+│   ├── app/
+│   └── ...
+├── api/                          → https://api.test
+└── shop/                         → https://shop.test
 ```
 
 ### Understanding Environment Files
