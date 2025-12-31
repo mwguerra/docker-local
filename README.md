@@ -30,6 +30,8 @@ Complete Docker development environment for Laravel with a powerful CLI.
 - [Quick Start](#quick-start)
 - [CLI Commands](#cli-commands)
 - [Configuration](#configuration)
+  - [Directory Structure](#directory-structure)
+  - [Understanding Environment Files](#understanding-environment-files)
 - [Services](#services)
 - [Optional Services](#optional-services)
 - [Multi-Project Support](#multi-project-support)
@@ -388,6 +390,65 @@ Configuration is stored in `~/.config/docker-local/config.json`:
 ├── api/                                    → https://api.test
 └── shop/                                   → https://shop.test
 ```
+
+### Understanding Environment Files
+
+docker-local uses **two separate `.env` files** for different purposes:
+
+| File | Scope | Used By | Location |
+|------|-------|---------|----------|
+| `.env.example` | Docker infrastructure | `docker-compose.yml` | `~/.config/docker-local/.env` |
+| `laravel.env.example` | Laravel application | Laravel framework | `~/projects/<project>/.env` |
+
+#### `.env.example` (Docker/Infrastructure)
+
+Controls **how Docker containers are built and connected**:
+
+```bash
+PROJECTS_PATH=~/projects       # Where your projects live
+MYSQL_PORT=3306               # Port exposed to your host machine
+MYSQL_ROOT_PASSWORD=secret    # Container MySQL password
+XDEBUG_ENABLED=true           # PHP container configuration
+```
+
+This file is copied to `~/.config/docker-local/.env` and read by `docker-compose.yml` via `${VARIABLE}` syntax.
+
+#### `laravel.env.example` (Application)
+
+Controls **how Laravel connects to services from inside the container**:
+
+```bash
+DB_HOST=mysql                 # Docker service name (NOT localhost!)
+DB_PORT=3306                  # Internal container port
+REDIS_HOST=redis              # Docker service name
+MAIL_HOST=mailpit             # Docker service name
+```
+
+This file is copied to each project's `.env` (`~/projects/my-app/.env`) and read by Laravel via `env()` and `config()`.
+
+#### Why Both Files Exist
+
+**Key insight:** The same service has different addresses depending on where you're accessing it from:
+
+| Accessing From | MySQL Address | Why |
+|----------------|---------------|-----|
+| Your host (TablePlus, DBeaver) | `localhost:3306` | Uses exposed port |
+| Inside PHP container (Laravel) | `mysql:3306` | Uses Docker DNS |
+
+The Docker `.env` configures what ports are **exposed to your machine**, while the Laravel `.env` configures how to reach services **via Docker's internal network**.
+
+#### Related Files
+
+```
+docker-local/
+├── .env.example              # Docker infrastructure template
+├── laravel.env.example       # Laravel application template (manual use)
+└── stubs/
+    ├── .env.stub             # Docker template (for CLI automation)
+    └── laravel.env.stub      # Laravel template with {{PLACEHOLDERS}}
+```
+
+The `stubs/` versions contain placeholders like `{{PROJECT_NAME}}` for automated project creation via `docker-local make:laravel`.
 
 ## Services
 
