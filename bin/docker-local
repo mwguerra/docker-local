@@ -1,0 +1,3026 @@
+#!/bin/bash
+
+# ==============================================================================
+# docker-local - CLI for Laravel Docker Development Environment
+# ==============================================================================
+# Package: mwguerra/docker-local
+#
+# Installation:
+#   composer global require mwguerra/docker-local
+#
+# Usage:
+#   docker-local <command> [options]
+#
+# For full list of commands:
+#   docker-local help
+# ==============================================================================
+
+set -e
+
+# Get the package directory (where this script is located)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# Source the configuration helper
+if [ -f "$PACKAGE_DIR/lib/config.sh" ]; then
+    source "$PACKAGE_DIR/lib/config.sh"
+else
+    echo "Error: Configuration helper not found at $PACKAGE_DIR/lib/config.sh" >&2
+    exit 1
+fi
+
+# Version
+VERSION="2.0.0"
+
+# Configuration directory (XDG compliant)
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/docker-local"
+
+# Projects directory (from config or default)
+PROJECTS_DIR="$(get_projects_dir)"
+
+# Docker environment directory (package resources)
+DOCKER_ENV_DIR="$PACKAGE_DIR/resources/docker"
+
+# Additional colors not in config.sh
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+DIM='\033[2m'
+BOLD='\033[1m'
+
+# Load environment variables from config
+load_env
+
+# Also load user's .env if it exists in config dir
+if [ -f "$CONFIG_DIR/.env" ]; then
+    set -a
+    source "$CONFIG_DIR/.env"
+    set +a
+fi
+
+# ==============================================================================
+# Funções Auxiliares
+# ==============================================================================
+
+show_logo() {
+    echo -e "${BLUE}"
+    echo "  ╭─────────────────────────────────────────╮"
+    echo "  │     🐳 docker-local v${VERSION}             │"
+    echo "  │     Laravel Docker Environment          │"
+    echo "  ╰─────────────────────────────────────────╯"
+    echo -e "${NC}"
+}
+
+show_help() {
+    show_logo
+    echo -e "${WHITE}Usage:${NC} docker-local <command> [options]"
+    echo ""
+    echo -e "${WHITE}Setup Commands:${NC}"
+    echo -e "  ${GREEN}init${NC}                  Complete initial setup (first run)"
+    echo -e "  ${GREEN}doctor${NC}                Full system health check"
+    echo -e "  ${GREEN}setup:hosts${NC}           Add Docker hostnames to /etc/hosts ${DIM}(sudo)${NC}"
+    echo -e "  ${GREEN}setup:dns${NC}             Configure dnsmasq for *.test ${DIM}(sudo)${NC}"
+    echo ""
+    echo -e "${WHITE}Environment Commands:${NC}"
+    echo -e "  ${GREEN}up${NC}                    Start Docker environment"
+    echo -e "  ${GREEN}down${NC}                  Stop Docker environment"
+    echo -e "  ${GREEN}restart${NC}               Restart Docker environment"
+    echo -e "  ${GREEN}status${NC}                Show status of all services"
+    echo -e "  ${GREEN}logs${NC} [service]        Show Docker logs"
+    echo -e "  ${GREEN}update${NC}                Update Docker images and CLI"
+    echo -e "  ${GREEN}clean${NC}                 Clean caches, logs, Docker"
+    echo ""
+    echo -e "${WHITE}Project Commands:${NC}"
+    echo -e "  ${GREEN}list${NC}                  List all Laravel projects"
+    echo -e "  ${GREEN}make:laravel${NC} <name>   Create new Laravel project"
+    echo -e "  ${GREEN}clone${NC} <repo>          Clone and setup existing project"
+    echo -e "  ${GREEN}open${NC} [name|--mail]    Open project/service in browser"
+    echo -e "  ${GREEN}ide${NC} [code|phpstorm]   Open project in IDE"
+    echo -e "  ${GREEN}env:check${NC}             Verify .env (services, prefixes, conflicts)"
+    echo -e "  ${GREEN}env:check --all${NC}       Audit ALL projects for conflicts"
+    echo -e "  ${GREEN}make:env${NC}              Generate new .env with unique IDs"
+    echo -e "  ${GREEN}update:env${NC}            Update existing .env"
+    echo ""
+    echo -e "${WHITE}Development Commands:${NC}"
+    echo -e "  ${GREEN}tinker${NC}                Open Laravel Tinker"
+    echo -e "  ${GREEN}test${NC} [options]        Run tests (pest/phpunit)"
+    echo -e "  ${GREEN}require${NC} <package>     Install composer package"
+    echo -e "  ${GREEN}logs:laravel${NC}          Tail Laravel logs"
+    echo ""
+    echo -e "${WHITE}Artisan Shortcuts:${NC}"
+    echo -e "  ${GREEN}new:model${NC} <name>      artisan make:model"
+    echo -e "  ${GREEN}new:controller${NC} <name> artisan make:controller"
+    echo -e "  ${GREEN}new:migration${NC} <name>  artisan make:migration"
+    echo -e "  ${GREEN}new:seeder${NC} <name>     artisan make:seeder"
+    echo -e "  ${GREEN}new:factory${NC} <name>    artisan make:factory"
+    echo -e "  ${GREEN}new:request${NC} <name>    artisan make:request"
+    echo -e "  ${GREEN}new:resource${NC} <name>   artisan make:resource"
+    echo -e "  ${GREEN}new:middleware${NC} <name> artisan make:middleware"
+    echo -e "  ${GREEN}new:event${NC} <name>      artisan make:event"
+    echo -e "  ${GREEN}new:job${NC} <name>        artisan make:job"
+    echo -e "  ${GREEN}new:mail${NC} <name>       artisan make:mail"
+    echo -e "  ${GREEN}new:command${NC} <name>    artisan make:command"
+    echo ""
+    echo -e "${WHITE}Database Commands:${NC}"
+    echo -e "  ${GREEN}db:mysql${NC}              Open MySQL CLI"
+    echo -e "  ${GREEN}db:postgres${NC}           Open PostgreSQL CLI"
+    echo -e "  ${GREEN}db:redis${NC}              Open Redis CLI"
+    echo -e "  ${GREEN}db:create${NC} <name>      Create database"
+    echo -e "  ${GREEN}db:dump${NC} [name]        Export database to SQL"
+    echo -e "  ${GREEN}db:restore${NC} <file>     Import SQL file"
+    echo -e "  ${GREEN}db:fresh${NC}              migrate:fresh --seed"
+    echo ""
+    echo -e "${WHITE}Queue Commands:${NC}"
+    echo -e "  ${GREEN}queue:work${NC}            Start queue worker"
+    echo -e "  ${GREEN}queue:restart${NC}         Restart queue workers"
+    echo -e "  ${GREEN}queue:failed${NC}          List failed jobs"
+    echo -e "  ${GREEN}queue:retry${NC} [id|all]  Retry failed jobs"
+    echo -e "  ${GREEN}queue:clear${NC}           Clear all queued jobs"
+    echo ""
+    echo -e "${WHITE}Xdebug Commands:${NC}"
+    echo -e "  ${GREEN}xdebug${NC} [on|off]       Toggle Xdebug"
+    echo -e "  ${GREEN}xdebug status${NC}         Show Xdebug status"
+    echo ""
+    echo -e "${WHITE}Startup Commands:${NC}"
+    echo -e "  ${GREEN}startup${NC} enable        Start on OS boot"
+    echo -e "  ${GREEN}startup${NC} disable       Disable startup on boot"
+    echo -e "  ${GREEN}startup${NC} status        Show startup status"
+    echo ""
+    echo -e "${WHITE}Other Commands:${NC}"
+    echo -e "  ${GREEN}shell${NC}                 Open PHP container shell"
+    echo -e "  ${GREEN}config${NC}                Show configuration"
+    echo -e "  ${GREEN}completion${NC} [bash|zsh] Generate shell completion"
+    echo -e "  ${GREEN}self-update${NC}           Update docker-local CLI"
+    echo -e "  ${GREEN}help${NC}                  Show this help"
+    echo ""
+    echo -e "${WHITE}Examples:${NC}"
+    echo -e "  ${DIM}docker-local init${NC}                    # First time setup"
+    echo -e "  ${DIM}docker-local make:laravel blog${NC}       # Create project"
+    echo -e "  ${DIM}docker-local clone git@...${NC}           # Clone existing"
+    echo -e "  ${DIM}docker-local open${NC}                    # Open in browser"
+    echo -e "  ${DIM}docker-local test --coverage${NC}         # Run tests"
+    echo -e "  ${DIM}docker-local new:model Post -mcr${NC}     # Create model"
+    echo ""
+}
+
+check_docker_env() {
+    # Check if package resources directory exists
+    if [ ! -d "$PACKAGE_DIR/resources/docker" ]; then
+        echo -e "${RED}Error: Docker resources not found at $PACKAGE_DIR/resources/docker${NC}"
+        echo -e "This may indicate a corrupted installation. Try reinstalling:"
+        echo -e "  ${CYAN}composer global remove mwguerra/docker-local${NC}"
+        echo -e "  ${CYAN}composer global require mwguerra/docker-local${NC}"
+        exit 1
+    fi
+}
+
+check_docker_running() {
+    if ! docker info > /dev/null 2>&1; then
+        echo -e "${RED}Error: Docker is not running${NC}"
+        exit 1
+    fi
+}
+
+check_sudo() {
+    if [ "$EUID" -ne 0 ]; then
+        echo ""
+        echo -e "${RED}Error: This command requires root privileges${NC}"
+        echo ""
+        echo -e "Please run with sudo:"
+        echo -e "  ${CYAN}sudo docker-local $1${NC}"
+        echo ""
+        exit 1
+    fi
+}
+
+get_current_project() {
+    local current_dir=$(pwd)
+    
+    if [[ "$current_dir" == "$PROJECTS_DIR"* ]]; then
+        local relative_path="${current_dir#$PROJECTS_DIR/}"
+        local project_name=$(echo "$relative_path" | cut -d'/' -f1)
+        
+        if [ -n "$project_name" ] && [ -d "$PROJECTS_DIR/$project_name" ]; then
+            echo "$project_name"
+            return 0
+        fi
+    fi
+    
+    if [ -f "$current_dir/artisan" ]; then
+        basename "$current_dir"
+        return 0
+    fi
+    
+    return 1
+}
+
+get_current_project_path() {
+    local project_name=$(get_current_project)
+    if [ -n "$project_name" ]; then
+        if [ -d "$PROJECTS_DIR/$project_name" ]; then
+            echo "$PROJECTS_DIR/$project_name"
+        else
+            pwd
+        fi
+    else
+        pwd
+    fi
+}
+
+require_project() {
+    local project_name=$(get_current_project)
+    if [ -z "$project_name" ]; then
+        echo -e "${RED}Error: Not in a Laravel project directory${NC}"
+        echo -e "Please cd to a project in ${CYAN}$PROJECTS_DIR${NC}"
+        exit 1
+    fi
+    echo "$project_name"
+}
+
+run_artisan() {
+    local project_path=$(get_current_project_path)
+    cd "$project_path"
+    
+    if command -v php &> /dev/null; then
+        php artisan "$@"
+    else
+        local project_name=$(basename "$project_path")
+        docker exec -it -w "/var/www/$project_name" php php artisan "$@"
+    fi
+}
+
+run_composer() {
+    local project_path=$(get_current_project_path)
+    cd "$project_path"
+    
+    if command -v composer &> /dev/null; then
+        composer "$@"
+    else
+        local project_name=$(basename "$project_path")
+        docker exec -it -w "/var/www/$project_name" php composer "$@"
+    fi
+}
+
+# ==============================================================================
+# LIST - Listar projetos
+# ==============================================================================
+
+cmd_list() {
+    echo -e "${WHITE}┌─────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│  Laravel Projects in ~/projects                                 │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+    
+    if [ ! -d "$PROJECTS_DIR" ]; then
+        echo -e "  ${DIM}No projects directory found${NC}"
+        echo -e "  Run: ${CYAN}docker-local make:laravel <name>${NC}"
+        return
+    fi
+    
+    local found=false
+    
+    printf "  ${WHITE}%-20s %-35s %s${NC}\n" "NAME" "URL" "STATUS"
+    echo -e "  ${DIM}────────────────────────────────────────────────────────────────${NC}"
+    
+    for dir in "$PROJECTS_DIR"/*/; do
+        if [ -f "$dir/artisan" ]; then
+            found=true
+            local name=$(basename "$dir")
+            local url="https://$name.test"
+            local status=""
+            
+            # Verificar se acessível
+            if curl -sk --connect-timeout 1 "$url" > /dev/null 2>&1; then
+                status="${GREEN}✓ accessible${NC}"
+            elif ping -c 1 -W 1 "$name.test" > /dev/null 2>&1; then
+                status="${YELLOW}○ DNS ok${NC}"
+            else
+                status="${RED}✗ DNS not configured${NC}"
+            fi
+            
+            printf "  %-20s %-35s %b\n" "$name" "$url" "$status"
+        fi
+    done
+    
+    if [ "$found" = false ]; then
+        echo -e "  ${DIM}No Laravel projects found${NC}"
+        echo ""
+        echo -e "  Create one with: ${CYAN}docker-local make:laravel <name>${NC}"
+    fi
+    
+    echo ""
+}
+
+# ==============================================================================
+# OPEN - Abrir no navegador
+# ==============================================================================
+
+cmd_open() {
+    local target="$1"
+    local url=""
+    
+    # Detectar comando de abertura do sistema
+    local open_cmd=""
+    if command -v xdg-open &> /dev/null; then
+        open_cmd="xdg-open"
+    elif command -v open &> /dev/null; then
+        open_cmd="open"
+    else
+        echo -e "${RED}Error: No browser opener found (xdg-open or open)${NC}"
+        exit 1
+    fi
+    
+    case "$target" in
+        --mail|--mailpit|mail|mailpit)
+            url="http://localhost:${MAILPIT_WEB_PORT:-8025}"
+            echo -e "${BLUE}Opening Mailpit...${NC}"
+            ;;
+        --minio|minio)
+            url="http://localhost:${MINIO_CONSOLE_PORT:-9001}"
+            echo -e "${BLUE}Opening MinIO Console...${NC}"
+            ;;
+        --traefik|traefik)
+            url="https://traefik.localhost"
+            echo -e "${BLUE}Opening Traefik Dashboard...${NC}"
+            ;;
+        --redis|redis|--redis-commander)
+            echo -e "${YELLOW}Redis CLI: ${CYAN}docker-local db:redis${NC}"
+            return
+            ;;
+        "")
+            # Projeto atual
+            local project_name=$(get_current_project)
+            if [ -z "$project_name" ]; then
+                echo -e "${RED}Error: Not in a project directory${NC}"
+                echo -e "Usage: docker-local open [project-name|--mail|--minio|--traefik]"
+                exit 1
+            fi
+            url="https://$project_name.test"
+            echo -e "${BLUE}Opening $project_name...${NC}"
+            ;;
+        *)
+            # Projeto específico
+            if [ -d "$PROJECTS_DIR/$target" ]; then
+                url="https://$target.test"
+                echo -e "${BLUE}Opening $target...${NC}"
+            else
+                echo -e "${RED}Error: Project '$target' not found${NC}"
+                exit 1
+            fi
+            ;;
+    esac
+    
+    $open_cmd "$url" 2>/dev/null &
+    echo -e "${GREEN}✓ Opened: ${CYAN}$url${NC}"
+}
+
+# ==============================================================================
+# IDE - Abrir no editor
+# ==============================================================================
+
+cmd_ide() {
+    local editor="${1:-code}"
+    local project_path=$(get_current_project_path)
+    
+    if [ ! -f "$project_path/artisan" ]; then
+        echo -e "${RED}Error: Not in a Laravel project${NC}"
+        exit 1
+    fi
+    
+    case "$editor" in
+        code|vscode)
+            if command -v code &> /dev/null; then
+                echo -e "${BLUE}Opening in VS Code...${NC}"
+                code "$project_path"
+            else
+                echo -e "${RED}VS Code not found. Install with: snap install code${NC}"
+                exit 1
+            fi
+            ;;
+        phpstorm|storm)
+            if command -v phpstorm &> /dev/null; then
+                echo -e "${BLUE}Opening in PhpStorm...${NC}"
+                phpstorm "$project_path" &
+            elif [ -f "/snap/bin/phpstorm" ]; then
+                /snap/bin/phpstorm "$project_path" &
+            elif [ -d "$HOME/.local/share/JetBrains/Toolbox/apps/PhpStorm" ]; then
+                echo -e "${BLUE}Opening in PhpStorm...${NC}"
+                find "$HOME/.local/share/JetBrains/Toolbox/apps/PhpStorm" -name "phpstorm.sh" -type f | head -1 | xargs -I {} {} "$project_path" &
+            else
+                echo -e "${RED}PhpStorm not found${NC}"
+                exit 1
+            fi
+            ;;
+        sublime|subl)
+            if command -v subl &> /dev/null; then
+                echo -e "${BLUE}Opening in Sublime Text...${NC}"
+                subl "$project_path"
+            else
+                echo -e "${RED}Sublime Text not found${NC}"
+                exit 1
+            fi
+            ;;
+        *)
+            echo -e "${RED}Unknown editor: $editor${NC}"
+            echo -e "Supported: code, phpstorm, sublime"
+            exit 1
+            ;;
+    esac
+    
+    echo -e "${GREEN}✓ Opened: $project_path${NC}"
+}
+
+# ==============================================================================
+# CLONE - Clonar e configurar repositório
+# ==============================================================================
+
+cmd_clone() {
+    local repo="$1"
+    local project_name="$2"
+    
+    if [ -z "$repo" ]; then
+        echo -e "${RED}Error: Repository URL required${NC}"
+        echo -e "Usage: docker-local clone <repo-url> [project-name]"
+        exit 1
+    fi
+    
+    # Extrair nome do projeto se não fornecido
+    if [ -z "$project_name" ]; then
+        project_name=$(basename "$repo" .git)
+    fi
+    
+    local project_path="$PROJECTS_DIR/$project_name"
+    
+    if [ -d "$project_path" ]; then
+        echo -e "${RED}Error: Project '$project_name' already exists${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}Cloning repository...${NC}"
+    mkdir -p "$PROJECTS_DIR"
+    git clone "$repo" "$project_path"
+    
+    cd "$project_path"
+    
+    echo ""
+    echo -e "${BLUE}Installing dependencies...${NC}"
+    run_composer install
+    
+    echo ""
+    echo -e "${BLUE}Configuring .env...${NC}"
+    if [ -f ".env.example" ]; then
+        cp .env.example .env
+    fi
+    generate_laravel_env "$project_path" "$project_name"
+    
+    echo ""
+    echo -e "${BLUE}Generating application key...${NC}"
+    run_artisan key:generate
+    
+    echo ""
+    echo -e "${BLUE}Running migrations...${NC}"
+    run_artisan migrate --force 2>/dev/null || echo -e "${YELLOW}⚠ Migrations skipped (database may not be ready)${NC}"
+    
+    # NPM install se package.json existir
+    if [ -f "package.json" ]; then
+        echo ""
+        echo -e "${BLUE}Installing NPM dependencies...${NC}"
+        if command -v npm &> /dev/null; then
+            npm install
+        else
+            echo -e "${YELLOW}⚠ npm not found, skipping${NC}"
+        fi
+    fi
+    
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                    Project Cloned! 🎉                         ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  ${WHITE}Project:${NC}  $project_name"
+    echo -e "  ${WHITE}Path:${NC}     $project_path"
+    echo -e "  ${WHITE}URL:${NC}      ${CYAN}https://$project_name.test${NC}"
+    echo ""
+    echo -e "  ${WHITE}Next steps:${NC}"
+    echo -e "    cd $project_path"
+    echo -e "    docker-local env:check"
+    echo -e "    php artisan migrate"
+    echo ""
+}
+
+# ==============================================================================
+# TINKER
+# ==============================================================================
+
+cmd_tinker() {
+    require_project > /dev/null
+    run_artisan tinker
+}
+
+# ==============================================================================
+# TEST - Rodar testes
+# ==============================================================================
+
+cmd_test() {
+    require_project > /dev/null
+    local project_path=$(get_current_project_path)
+    cd "$project_path"
+    
+    local args=("$@")
+    local use_coverage=false
+    local use_parallel=false
+    local filtered_args=()
+    
+    # Processar argumentos
+    for arg in "${args[@]}"; do
+        case "$arg" in
+            --coverage)
+                use_coverage=true
+                ;;
+            --parallel)
+                use_parallel=true
+                ;;
+            *)
+                filtered_args+=("$arg")
+                ;;
+        esac
+    done
+    
+    # Detectar Pest ou PHPUnit
+    if [ -f "vendor/bin/pest" ]; then
+        local test_cmd="./vendor/bin/pest"
+    else
+        local test_cmd="php artisan test"
+    fi
+    
+    # Montar comando
+    if [ "$use_coverage" = true ]; then
+        if [ -f "vendor/bin/pest" ]; then
+            test_cmd="$test_cmd --coverage"
+        else
+            test_cmd="$test_cmd --coverage-html=coverage"
+        fi
+    fi
+    
+    if [ "$use_parallel" = true ]; then
+        test_cmd="$test_cmd --parallel"
+    fi
+    
+    echo -e "${BLUE}Running tests...${NC}"
+    echo -e "${DIM}$test_cmd ${filtered_args[*]}${NC}"
+    echo ""
+    
+    $test_cmd "${filtered_args[@]}"
+}
+
+# ==============================================================================
+# REQUIRE - Instalar pacote composer
+# ==============================================================================
+
+cmd_require() {
+    require_project > /dev/null
+    local package="$1"
+    shift
+    local args="$@"
+    
+    if [ -z "$package" ]; then
+        echo -e "${RED}Error: Package name required${NC}"
+        echo -e "Usage: docker-local require <package> [--dev]"
+        exit 1
+    fi
+    
+    # Mapear nomes curtos para pacotes completos
+    case "$package" in
+        sanctum)
+            package="laravel/sanctum"
+            ;;
+        telescope)
+            package="laravel/telescope"
+            args="--dev $args"
+            ;;
+        horizon)
+            package="laravel/horizon"
+            ;;
+        breeze)
+            package="laravel/breeze"
+            args="--dev $args"
+            ;;
+        jetstream)
+            package="laravel/jetstream"
+            ;;
+        debugbar)
+            package="barryvdh/laravel-debugbar"
+            args="--dev $args"
+            ;;
+        ide-helper)
+            package="barryvdh/laravel-ide-helper"
+            args="--dev $args"
+            ;;
+        pint)
+            package="laravel/pint"
+            args="--dev $args"
+            ;;
+        pest)
+            package="pestphp/pest pestphp/pest-plugin-laravel"
+            args="--dev $args"
+            ;;
+        livewire)
+            package="livewire/livewire"
+            ;;
+        filament)
+            package="filament/filament"
+            ;;
+        spatie-permission)
+            package="spatie/laravel-permission"
+            ;;
+        spatie-media)
+            package="spatie/laravel-medialibrary"
+            ;;
+        spatie-backup)
+            package="spatie/laravel-backup"
+            ;;
+        spatie-activity)
+            package="spatie/laravel-activitylog"
+            ;;
+    esac
+    
+    echo -e "${BLUE}Installing: ${WHITE}$package${NC}"
+    run_composer require $package $args
+    
+    # Sugerir próximos passos
+    echo ""
+    case "$package" in
+        *sanctum*)
+            echo -e "${YELLOW}Next: php artisan vendor:publish --provider=\"Laravel\\Sanctum\\SanctumServiceProvider\"${NC}"
+            echo -e "${YELLOW}      php artisan migrate${NC}"
+            ;;
+        *telescope*)
+            echo -e "${YELLOW}Next: php artisan telescope:install${NC}"
+            echo -e "${YELLOW}      php artisan migrate${NC}"
+            ;;
+        *horizon*)
+            echo -e "${YELLOW}Next: php artisan horizon:install${NC}"
+            ;;
+        *breeze*)
+            echo -e "${YELLOW}Next: php artisan breeze:install${NC}"
+            ;;
+        *jetstream*)
+            echo -e "${YELLOW}Next: php artisan jetstream:install [livewire|inertia]${NC}"
+            ;;
+        *filament*)
+            echo -e "${YELLOW}Next: php artisan filament:install --panels${NC}"
+            ;;
+        *pest*)
+            echo -e "${YELLOW}Next: ./vendor/bin/pest --init${NC}"
+            ;;
+    esac
+}
+
+# ==============================================================================
+# LOGS:LARAVEL - Tail logs do Laravel
+# ==============================================================================
+
+cmd_logs_laravel() {
+    require_project > /dev/null
+    local project_path=$(get_current_project_path)
+    local log_file="$project_path/storage/logs/laravel.log"
+    
+    if [ ! -f "$log_file" ]; then
+        echo -e "${YELLOW}No Laravel log file found${NC}"
+        echo -e "Log file expected at: $log_file"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}Tailing Laravel logs (Ctrl+C to stop)...${NC}"
+    echo -e "${DIM}$log_file${NC}"
+    echo ""
+    
+    tail -f "$log_file"
+}
+
+# ==============================================================================
+# ARTISAN MAKE SHORTCUTS
+# ==============================================================================
+
+cmd_new_model() {
+    require_project > /dev/null
+    run_artisan make:model "$@"
+}
+
+cmd_new_controller() {
+    require_project > /dev/null
+    run_artisan make:controller "$@"
+}
+
+cmd_new_migration() {
+    require_project > /dev/null
+    run_artisan make:migration "$@"
+}
+
+cmd_new_seeder() {
+    require_project > /dev/null
+    run_artisan make:seeder "$@"
+}
+
+cmd_new_factory() {
+    require_project > /dev/null
+    run_artisan make:factory "$@"
+}
+
+cmd_new_request() {
+    require_project > /dev/null
+    run_artisan make:request "$@"
+}
+
+cmd_new_resource() {
+    require_project > /dev/null
+    run_artisan make:resource "$@"
+}
+
+cmd_new_middleware() {
+    require_project > /dev/null
+    run_artisan make:middleware "$@"
+}
+
+cmd_new_event() {
+    require_project > /dev/null
+    run_artisan make:event "$@"
+}
+
+cmd_new_job() {
+    require_project > /dev/null
+    run_artisan make:job "$@"
+}
+
+cmd_new_mail() {
+    require_project > /dev/null
+    run_artisan make:mail "$@"
+}
+
+cmd_new_command() {
+    require_project > /dev/null
+    run_artisan make:command "$@"
+}
+
+# ==============================================================================
+# DATABASE - Dump, Restore, Fresh
+# ==============================================================================
+
+cmd_db_dump() {
+    require_project > /dev/null
+    local project_path=$(get_current_project_path)
+    local project_name=$(basename "$project_path")
+    
+    # Ler configurações do .env
+    local env_file="$project_path/.env"
+    local db_connection=$(grep "^DB_CONNECTION=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    local db_database=$(grep "^DB_DATABASE=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    local db_username=$(grep "^DB_USERNAME=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    local db_password=$(grep "^DB_PASSWORD=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local output_file="$project_path/dump_${db_database}_${timestamp}.sql"
+    
+    echo -e "${BLUE}Creating database dump...${NC}"
+    
+    case "$db_connection" in
+        mysql)
+            docker exec mysql mysqldump -u"$db_username" -p"$db_password" "$db_database" > "$output_file"
+            ;;
+        pgsql)
+            docker exec postgres pg_dump -U "$db_username" "$db_database" > "$output_file"
+            ;;
+        *)
+            echo -e "${RED}Unsupported database: $db_connection${NC}"
+            exit 1
+            ;;
+    esac
+    
+    local size=$(du -h "$output_file" | cut -f1)
+    echo -e "${GREEN}✓ Dump created: ${CYAN}$output_file${NC} ($size)"
+}
+
+cmd_db_restore() {
+    require_project > /dev/null
+    local sql_file="$1"
+    local project_path=$(get_current_project_path)
+    
+    if [ -z "$sql_file" ]; then
+        echo -e "${RED}Error: SQL file required${NC}"
+        echo -e "Usage: docker-local db:restore <file.sql>"
+        exit 1
+    fi
+    
+    if [ ! -f "$sql_file" ]; then
+        # Tentar no diretório do projeto
+        if [ -f "$project_path/$sql_file" ]; then
+            sql_file="$project_path/$sql_file"
+        else
+            echo -e "${RED}Error: File not found: $sql_file${NC}"
+            exit 1
+        fi
+    fi
+    
+    local env_file="$project_path/.env"
+    local db_connection=$(grep "^DB_CONNECTION=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    local db_database=$(grep "^DB_DATABASE=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    local db_username=$(grep "^DB_USERNAME=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    local db_password=$(grep "^DB_PASSWORD=" "$env_file" 2>/dev/null | cut -d'=' -f2)
+    
+    echo -e "${BLUE}Restoring database from: ${WHITE}$sql_file${NC}"
+    echo -e "${YELLOW}Warning: This will overwrite existing data in '$db_database'${NC}"
+    read -p "Continue? [y/N] " -n 1 -r
+    echo
+    
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+    
+    case "$db_connection" in
+        mysql)
+            docker exec -i mysql mysql -u"$db_username" -p"$db_password" "$db_database" < "$sql_file"
+            ;;
+        pgsql)
+            docker exec -i postgres psql -U "$db_username" "$db_database" < "$sql_file"
+            ;;
+        *)
+            echo -e "${RED}Unsupported database: $db_connection${NC}"
+            exit 1
+            ;;
+    esac
+    
+    echo -e "${GREEN}✓ Database restored successfully${NC}"
+}
+
+cmd_db_fresh() {
+    require_project > /dev/null
+    
+    echo -e "${YELLOW}This will drop all tables and re-run migrations with seeders.${NC}"
+    read -p "Continue? [y/N] " -n 1 -r
+    echo
+    
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+    
+    echo -e "${BLUE}Running migrate:fresh --seed...${NC}"
+    run_artisan migrate:fresh --seed
+}
+
+# ==============================================================================
+# QUEUE Commands
+# ==============================================================================
+
+cmd_queue_work() {
+    require_project > /dev/null
+    echo -e "${BLUE}Starting queue worker (Ctrl+C to stop)...${NC}"
+    run_artisan queue:work --tries=3
+}
+
+cmd_queue_restart() {
+    require_project > /dev/null
+    echo -e "${BLUE}Restarting queue workers...${NC}"
+    run_artisan queue:restart
+    echo -e "${GREEN}✓ Queue restart signal sent${NC}"
+}
+
+cmd_queue_failed() {
+    require_project > /dev/null
+    run_artisan queue:failed
+}
+
+cmd_queue_retry() {
+    require_project > /dev/null
+    local id="${1:-all}"
+    
+    echo -e "${BLUE}Retrying failed jobs: $id${NC}"
+    run_artisan queue:retry "$id"
+}
+
+cmd_queue_clear() {
+    require_project > /dev/null
+    
+    echo -e "${YELLOW}This will clear all queued jobs.${NC}"
+    read -p "Continue? [y/N] " -n 1 -r
+    echo
+    
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Cancelled."
+        exit 0
+    fi
+    
+    run_artisan queue:clear
+    echo -e "${GREEN}✓ Queue cleared${NC}"
+}
+
+# ==============================================================================
+# XDEBUG Toggle
+# ==============================================================================
+
+cmd_xdebug() {
+    local action="${1:-status}"
+    local xdebug_ini="$PACKAGE_DIR/resources/docker/php/xdebug.ini"
+    
+    case "$action" in
+        on|enable)
+            echo -e "${BLUE}Enabling Xdebug...${NC}"
+            
+            # Atualizar xdebug.ini
+            sed -i 's/xdebug.mode=off/xdebug.mode=debug/' "$xdebug_ini" 2>/dev/null || true
+            sed -i 's/;xdebug.mode=debug/xdebug.mode=debug/' "$xdebug_ini" 2>/dev/null || true
+            
+            # Reiniciar PHP container
+            docker restart php > /dev/null 2>&1
+            
+            echo -e "${GREEN}✓ Xdebug enabled${NC}"
+            echo -e "${DIM}PHP container restarted${NC}"
+            ;;
+        off|disable)
+            echo -e "${BLUE}Disabling Xdebug...${NC}"
+            
+            sed -i 's/xdebug.mode=debug/xdebug.mode=off/' "$xdebug_ini" 2>/dev/null || true
+            
+            docker restart php > /dev/null 2>&1
+            
+            echo -e "${GREEN}✓ Xdebug disabled (better performance)${NC}"
+            echo -e "${DIM}PHP container restarted${NC}"
+            ;;
+        status)
+            echo -e "${WHITE}Xdebug Status:${NC}"
+            echo ""
+            
+            local mode=$(grep "^xdebug.mode=" "$xdebug_ini" 2>/dev/null | cut -d'=' -f2)
+            
+            if [ "$mode" = "debug" ]; then
+                echo -e "  Status: ${GREEN}enabled${NC}"
+            else
+                echo -e "  Status: ${YELLOW}disabled${NC}"
+            fi
+            
+            echo -e "  Mode:   $mode"
+            echo -e "  Port:   9003"
+            echo ""
+            echo -e "Toggle with: ${CYAN}docker-local xdebug on${NC} / ${CYAN}off${NC}"
+            ;;
+        *)
+            echo -e "${RED}Unknown action: $action${NC}"
+            echo -e "Usage: docker-local xdebug [on|off|status]"
+            ;;
+    esac
+}
+
+# ==============================================================================
+# CLEAN - Limpar caches
+# ==============================================================================
+
+cmd_clean() {
+    local target="${1:---all}"
+    
+    case "$target" in
+        --laravel|-l)
+            require_project > /dev/null
+            echo -e "${BLUE}Cleaning Laravel caches...${NC}"
+            run_artisan cache:clear
+            run_artisan config:clear
+            run_artisan route:clear
+            run_artisan view:clear
+            echo -e "${GREEN}✓ Laravel caches cleared${NC}"
+            ;;
+        --docker|-d)
+            echo -e "${BLUE}Cleaning Docker...${NC}"
+            docker system prune -f
+            echo -e "${GREEN}✓ Docker cleaned${NC}"
+            ;;
+        --logs)
+            require_project > /dev/null
+            local project_path=$(get_current_project_path)
+            echo -e "${BLUE}Cleaning log files...${NC}"
+            find "$project_path/storage/logs" -name "*.log" -type f -delete 2>/dev/null || true
+            echo -e "${GREEN}✓ Log files cleaned${NC}"
+            ;;
+        --all|-a|"")
+            echo -e "${BLUE}Cleaning everything...${NC}"
+            echo ""
+            
+            # Laravel (se em projeto)
+            if get_current_project > /dev/null 2>&1; then
+                echo -e "${DIM}Laravel caches...${NC}"
+                run_artisan cache:clear 2>/dev/null || true
+                run_artisan config:clear 2>/dev/null || true
+                run_artisan route:clear 2>/dev/null || true
+                run_artisan view:clear 2>/dev/null || true
+            fi
+            
+            # Docker
+            echo -e "${DIM}Docker prune...${NC}"
+            docker system prune -f > /dev/null 2>&1
+            
+            echo ""
+            echo -e "${GREEN}✓ Cleanup complete${NC}"
+            ;;
+        *)
+            echo -e "Usage: docker-local clean [--laravel|--docker|--logs|--all]"
+            ;;
+    esac
+}
+
+# ==============================================================================
+# DOCTOR - Diagnóstico completo
+# ==============================================================================
+
+cmd_doctor() {
+    show_logo
+    
+    echo -e "${WHITE}┌─────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│  System Health Check                                            │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+    
+    local issues=0
+    local warnings=0
+    
+    # Docker
+    echo -e "${WHITE}Docker:${NC}"
+    
+    if docker info > /dev/null 2>&1; then
+        local docker_version=$(docker --version | awk '{print $3}' | tr -d ',')
+        echo -e "  ${GREEN}✓${NC} Docker running (v$docker_version)"
+    else
+        echo -e "  ${RED}✗${NC} Docker not running"
+        ((issues++))
+    fi
+    
+    if command -v docker-compose &> /dev/null || docker compose version &> /dev/null 2>&1; then
+        local compose_version=$(docker compose version 2>/dev/null | awk '{print $4}' || docker-compose --version | awk '{print $3}')
+        echo -e "  ${GREEN}✓${NC} Docker Compose ($compose_version)"
+    else
+        echo -e "  ${RED}✗${NC} Docker Compose not found"
+        ((issues++))
+    fi
+    
+    # Disk space
+    local free_space=$(df -h "$HOME" | awk 'NR==2 {print $4}')
+    local free_gb=$(df -BG "$HOME" | awk 'NR==2 {print $4}' | tr -d 'G')
+    if [ "$free_gb" -gt 10 ]; then
+        echo -e "  ${GREEN}✓${NC} Disk space OK ($free_space free)"
+    elif [ "$free_gb" -gt 5 ]; then
+        echo -e "  ${YELLOW}⚠${NC} Disk space low ($free_space free)"
+        ((warnings++))
+    else
+        echo -e "  ${RED}✗${NC} Disk space critical ($free_space free)"
+        ((issues++))
+    fi
+    echo ""
+    
+    # Services
+    echo -e "${WHITE}Services:${NC}"
+    
+    local services=("mysql:MySQL:${MYSQL_PORT:-3306}" "postgres:PostgreSQL:${POSTGRES_PORT:-5432}" "redis:Redis:${REDIS_PORT:-6379}" "minio:MinIO:${MINIO_API_PORT:-9000}" "mailpit:Mailpit:${MAILPIT_SMTP_PORT:-1025}" "traefik:Traefik:443" "nginx:Nginx:80" "php:PHP-FPM:-")
+    
+    for service_info in "${services[@]}"; do
+        IFS=':' read -r container name port <<< "$service_info"
+        
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^$container$"; then
+            if [ "$port" != "-" ]; then
+                echo -e "  ${GREEN}✓${NC} $name running (:$port)"
+            else
+                echo -e "  ${GREEN}✓${NC} $name running"
+            fi
+        else
+            echo -e "  ${RED}✗${NC} $name not running"
+            ((issues++))
+        fi
+    done
+    echo ""
+    
+    # Network
+    echo -e "${WHITE}Network:${NC}"
+    
+    if grep -q "127.0.0.1.*mysql.*postgres.*redis" /etc/hosts 2>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} /etc/hosts configured"
+    else
+        echo -e "  ${YELLOW}⚠${NC} /etc/hosts not configured"
+        echo -e "      ${DIM}Run: sudo docker-local setup:hosts${NC}"
+        ((warnings++))
+    fi
+    
+    if [ -f /etc/dnsmasq.d/laravel-dev.conf ] || [ -f /usr/local/etc/dnsmasq.d/laravel-dev.conf ]; then
+        echo -e "  ${GREEN}✓${NC} dnsmasq configured"
+        
+        if ping -c 1 -W 1 test.test > /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} *.test resolving"
+        else
+            echo -e "  ${YELLOW}⚠${NC} *.test not resolving"
+            ((warnings++))
+        fi
+    else
+        echo -e "  ${YELLOW}⚠${NC} dnsmasq not configured"
+        echo -e "      ${DIM}Run: sudo docker-local setup:dns${NC}"
+        ((warnings++))
+    fi
+    echo ""
+    
+    # PHP Local
+    echo -e "${WHITE}Local PHP:${NC}"
+    
+    if command -v php &> /dev/null; then
+        local php_version=$(php -v | head -1 | awk '{print $2}')
+        echo -e "  ${GREEN}✓${NC} PHP $php_version"
+        
+        for ext in pdo_mysql redis mbstring xml curl zip gd intl; do
+            if php -m 2>/dev/null | grep -qi "^$ext$"; then
+                echo -e "  ${GREEN}✓${NC} ext-$ext"
+            else
+                echo -e "  ${YELLOW}○${NC} ext-$ext ${DIM}(not installed)${NC}"
+            fi
+        done
+    else
+        echo -e "  ${YELLOW}○${NC} PHP not installed locally"
+        ((warnings++))
+    fi
+    echo ""
+    
+    # Composer
+    echo -e "${WHITE}Local Composer:${NC}"
+    
+    if command -v composer &> /dev/null; then
+        local composer_version=$(composer --version 2>/dev/null | awk '{print $3}')
+        echo -e "  ${GREEN}✓${NC} Composer $composer_version"
+    else
+        echo -e "  ${YELLOW}○${NC} Composer not installed"
+        ((warnings++))
+    fi
+    echo ""
+    
+    # Certificates
+    echo -e "${WHITE}SSL Certificates:${NC}"
+    
+    if command -v mkcert &> /dev/null; then
+        echo -e "  ${GREEN}✓${NC} mkcert installed"
+    else
+        echo -e "  ${YELLOW}○${NC} mkcert not installed"
+        ((warnings++))
+    fi
+    
+    if [ -f "$CONFIG_DIR/certs/test.crt" ]; then
+        local cert_end=$(openssl x509 -enddate -noout -in "$CONFIG_DIR/certs/test.crt" 2>/dev/null | cut -d= -f2)
+        if [ -n "$cert_end" ]; then
+            echo -e "  ${GREEN}✓${NC} *.test certificate (expires: $cert_end)"
+        else
+            echo -e "  ${GREEN}✓${NC} *.test certificate exists"
+        fi
+    else
+        echo -e "  ${YELLOW}○${NC} *.test certificate not found"
+        ((warnings++))
+    fi
+    echo ""
+    
+    # Summary
+    echo -e "${WHITE}┌─────────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│  Summary                                                        │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+    
+    if [ $issues -eq 0 ] && [ $warnings -eq 0 ]; then
+        echo -e "  ${GREEN}✓ All systems operational!${NC}"
+    elif [ $issues -eq 0 ]; then
+        echo -e "  ${YELLOW}⚠ $warnings warning(s) - environment works but could be improved${NC}"
+    else
+        echo -e "  ${RED}✗ $issues issue(s)${NC}, ${YELLOW}$warnings warning(s)${NC}"
+        echo ""
+        echo -e "  Run ${CYAN}docker-local init${NC} to fix common issues"
+    fi
+    echo ""
+}
+
+# ==============================================================================
+# UPDATE - Atualizar ambiente
+# ==============================================================================
+
+cmd_update() {
+    show_logo
+
+    echo -e "${WHITE}Updating Docker environment...${NC}"
+    echo ""
+
+    # Pull latest images
+    echo -e "${BLUE}[1/3] Pulling latest Docker images...${NC}"
+    docker_compose pull
+
+    # Rebuild if needed
+    echo ""
+    echo -e "${BLUE}[2/3] Rebuilding containers...${NC}"
+    docker_compose build --pull
+
+    # Restart
+    echo ""
+    echo -e "${BLUE}[3/3] Restarting services...${NC}"
+    docker_compose up -d
+
+    echo ""
+    echo -e "${GREEN}✓ Update complete!${NC}"
+    echo ""
+    echo -e "Run ${CYAN}docker-local doctor${NC} to verify everything is working"
+}
+
+# ==============================================================================
+# COMPLETION - Gerar autocompletion
+# ==============================================================================
+
+cmd_completion() {
+    local shell="${1:-bash}"
+    
+    case "$shell" in
+        bash)
+            cat << 'EOF'
+# docker-local bash completion
+# Add to ~/.bashrc: eval "$(docker-local completion bash)"
+
+_docker_local_completions() {
+    local cur="${COMP_WORDS[COMP_CWORD]}"
+    local prev="${COMP_WORDS[COMP_CWORD-1]}"
+    
+    local commands="init doctor up down restart status logs update clean list make:laravel clone open ide env:check make:env update:env tinker test require logs:laravel new:model new:controller new:migration new:seeder new:factory new:request new:resource new:middleware new:event new:job new:mail new:command db:mysql db:postgres db:redis db:create db:dump db:restore db:fresh queue:work queue:restart queue:failed queue:retry queue:clear xdebug shell config completion self-update help setup:hosts setup:dns"
+    
+    case "$prev" in
+        open)
+            local projects=$(ls -1 ~/projects 2>/dev/null | tr '\n' ' ')
+            COMPREPLY=($(compgen -W "$projects --mail --minio --traefik" -- "$cur"))
+            ;;
+        ide)
+            COMPREPLY=($(compgen -W "code phpstorm sublime" -- "$cur"))
+            ;;
+        xdebug)
+            COMPREPLY=($(compgen -W "on off status" -- "$cur"))
+            ;;
+        clean)
+            COMPREPLY=($(compgen -W "--laravel --docker --logs --all" -- "$cur"))
+            ;;
+        completion)
+            COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))
+            ;;
+        logs)
+            COMPREPLY=($(compgen -W "mysql postgres redis minio mailpit traefik nginx php" -- "$cur"))
+            ;;
+        *)
+            COMPREPLY=($(compgen -W "$commands" -- "$cur"))
+            ;;
+    esac
+}
+
+complete -F _docker_local_completions docker-local
+EOF
+            ;;
+        zsh)
+            cat << 'EOF'
+# docker-local zsh completion
+# Add to ~/.zshrc: eval "$(docker-local completion zsh)"
+
+_docker_local() {
+    local -a commands
+    commands=(
+        'init:Complete initial setup'
+        'doctor:Full system health check'
+        'up:Start Docker environment'
+        'down:Stop Docker environment'
+        'restart:Restart Docker environment'
+        'status:Show status of services'
+        'logs:Show Docker logs'
+        'update:Update Docker images'
+        'clean:Clean caches and Docker'
+        'list:List Laravel projects'
+        'make\:laravel:Create new Laravel project'
+        'clone:Clone and setup repository'
+        'open:Open project in browser'
+        'ide:Open project in IDE'
+        'env\:check:Verify .env configuration'
+        'make\:env:Generate .env file'
+        'update\:env:Update existing .env'
+        'tinker:Open Laravel Tinker'
+        'test:Run tests'
+        'require:Install composer package'
+        'logs\:laravel:Tail Laravel logs'
+        'new\:model:Create model'
+        'new\:controller:Create controller'
+        'new\:migration:Create migration'
+        'db\:mysql:Open MySQL CLI'
+        'db\:postgres:Open PostgreSQL CLI'
+        'db\:redis:Open Redis CLI'
+        'db\:dump:Export database'
+        'db\:restore:Import database'
+        'db\:fresh:Fresh migration with seed'
+        'queue\:work:Start queue worker'
+        'queue\:restart:Restart queue workers'
+        'queue\:failed:List failed jobs'
+        'queue\:retry:Retry failed jobs'
+        'xdebug:Toggle Xdebug'
+        'shell:Open PHP container shell'
+        'config:Show configuration'
+        'help:Show help'
+    )
+    
+    _describe 'command' commands
+}
+
+compdef _docker_local docker-local
+EOF
+            ;;
+        *)
+            echo "Supported shells: bash, zsh"
+            echo ""
+            echo "Usage:"
+            echo "  eval \"\$(docker-local completion bash)\"  # Add to ~/.bashrc"
+            echo "  eval \"\$(docker-local completion zsh)\"   # Add to ~/.zshrc"
+            ;;
+    esac
+}
+
+# ==============================================================================
+# Comando INIT - Setup completo
+# ==============================================================================
+
+cmd_init() {
+    show_logo
+    
+    echo -e "${WHITE}Starting complete environment setup...${NC}"
+    echo ""
+    
+    check_docker_env
+    
+    # Passo 1: Verificar Docker
+    echo -e "${BLUE}[1/6] Checking Docker...${NC}"
+    if ! docker info > /dev/null 2>&1; then
+        echo -e "${RED}  ✗ Docker is not running${NC}"
+        echo -e "  Please start Docker and run ${CYAN}docker-local init${NC} again"
+        exit 1
+    fi
+    echo -e "${GREEN}  ✓ Docker is running${NC}"
+    echo ""
+    
+    # Step 2: Create config directory and copy .env
+    echo -e "${BLUE}[2/6] Checking configuration...${NC}"
+    mkdir -p "$CONFIG_DIR"
+    if [ ! -f "$CONFIG_DIR/.env" ]; then
+        if [ -f "$PACKAGE_DIR/stubs/.env.stub" ]; then
+            cp "$PACKAGE_DIR/stubs/.env.stub" "$CONFIG_DIR/.env"
+            echo -e "${GREEN}  ✓ Created .env from template${NC}"
+        else
+            echo -e "${RED}  ✗ .env template not found${NC}"
+            exit 1
+        fi
+    else
+        echo -e "${GREEN}  ✓ .env already exists${NC}"
+    fi
+
+    # Copy config.json if it doesn't exist
+    if [ ! -f "$CONFIG_DIR/config.json" ]; then
+        if [ -f "$PACKAGE_DIR/stubs/config.json.stub" ]; then
+            cp "$PACKAGE_DIR/stubs/config.json.stub" "$CONFIG_DIR/config.json"
+            echo -e "${GREEN}  ✓ Created config.json from template${NC}"
+        fi
+    else
+        echo -e "${GREEN}  ✓ config.json already exists${NC}"
+    fi
+
+    # Copy traefik config if it doesn't exist
+    if [ ! -d "$CONFIG_DIR/traefik/dynamic" ]; then
+        mkdir -p "$CONFIG_DIR/traefik/dynamic"
+        if [ -f "$PACKAGE_DIR/resources/docker/traefik/dynamic/tls.yml" ]; then
+            cp "$PACKAGE_DIR/resources/docker/traefik/dynamic/tls.yml" "$CONFIG_DIR/traefik/dynamic/"
+            echo -e "${GREEN}  ✓ Created Traefik TLS config${NC}"
+        fi
+    else
+        echo -e "${GREEN}  ✓ Traefik config already exists${NC}"
+    fi
+    echo ""
+
+    # Step 3: Generate SSL certificates
+    echo -e "${BLUE}[3/6] Checking SSL certificates...${NC}"
+    if [ -f "$CONFIG_DIR/certs/test.crt" ] && [ -f "$CONFIG_DIR/certs/localhost.crt" ]; then
+        echo -e "${GREEN}  ✓ SSL certificates already exist${NC}"
+    else
+        echo -e "${YELLOW}  → Generating SSL certificates...${NC}"
+        if [ -f "$PACKAGE_DIR/scripts/generate-certs.sh" ]; then
+            bash "$PACKAGE_DIR/scripts/generate-certs.sh"
+        fi
+        echo -e "${GREEN}  ✓ SSL certificates generated${NC}"
+    fi
+    echo ""
+    
+    # Passo 4: Criar diretório de projetos
+    echo -e "${BLUE}[4/6] Checking projects directory...${NC}"
+    if [ ! -d "$PROJECTS_DIR" ]; then
+        mkdir -p "$PROJECTS_DIR"
+        echo -e "${GREEN}  ✓ Created $PROJECTS_DIR${NC}"
+    else
+        echo -e "${GREEN}  ✓ Projects directory exists${NC}"
+    fi
+    echo ""
+    
+    # Passo 5: Build e start dos containers
+    echo -e "${BLUE}[5/6] Starting Docker containers...${NC}"
+
+    if ! docker images | grep -q "docker-local-php\|mwguerra.*php"; then
+        echo -e "${YELLOW}  → Building Docker images (this may take a few minutes)...${NC}"
+        docker_compose build
+    fi
+
+    docker_compose up -d
+    echo -e "${GREEN}  ✓ Containers started${NC}"
+    echo ""
+    
+    # Passo 6: Verificar status
+    echo -e "${BLUE}[6/6] Checking services...${NC}"
+    sleep 3
+    
+    for service in mysql postgres redis minio mailpit; do
+        if docker ps --format '{{.Names}}' | grep -q "^$service$"; then
+            echo -e "  ${GREEN}✓${NC} $service"
+        else
+            echo -e "  ${RED}✗${NC} $service"
+        fi
+    done
+    echo ""
+    
+    # Resumo
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║               Basic Setup Complete! 🎉                        ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    local needs_hosts=false
+    local needs_dns=false
+    
+    if ! grep -q "127.0.0.1.*mysql.*postgres.*redis" /etc/hosts 2>/dev/null; then
+        needs_hosts=true
+    fi
+    
+    if [ ! -f /etc/dnsmasq.d/laravel-dev.conf ] 2>/dev/null; then
+        needs_dns=true
+    fi
+    
+    if [ "$needs_hosts" = true ] || [ "$needs_dns" = true ]; then
+        echo -e "${YELLOW}To complete setup, run these commands with sudo:${NC}"
+        echo ""
+        
+        if [ "$needs_hosts" = true ]; then
+            echo -e "  ${CYAN}sudo docker-local setup:hosts${NC}"
+            echo -e "  ${DIM}  └─ Enables local PHP to connect to Docker services${NC}"
+            echo ""
+        fi
+        
+        if [ "$needs_dns" = true ]; then
+            echo -e "  ${CYAN}sudo docker-local setup:dns${NC}"
+            echo -e "  ${DIM}  └─ Enables *.test domain resolution${NC}"
+            echo ""
+        fi
+    else
+        echo -e "${GREEN}✓ All configurations are complete!${NC}"
+        echo ""
+    fi
+    
+    echo -e "${WHITE}Next steps:${NC}"
+    echo ""
+    echo -e "  ${CYAN}docker-local make:laravel myapp${NC}    # Create a new project"
+    echo -e "  ${CYAN}docker-local list${NC}                  # List all projects"
+    echo -e "  ${CYAN}docker-local doctor${NC}                # Full health check"
+    echo ""
+}
+
+# ==============================================================================
+# Comandos do Ambiente
+# ==============================================================================
+
+cmd_up() {
+    check_docker_running
+    echo -e "${BLUE}Starting Docker environment...${NC}"
+    docker_compose up -d
+    echo -e "${GREEN}✓ Environment started${NC}"
+    echo ""
+    echo -e "Run ${CYAN}docker-local status${NC} to see service status"
+}
+
+cmd_down() {
+    echo -e "${BLUE}Stopping Docker environment...${NC}"
+    docker_compose down
+    echo -e "${GREEN}✓ Environment stopped${NC}"
+}
+
+cmd_restart() {
+    echo -e "${BLUE}Restarting Docker environment...${NC}"
+    docker_compose restart
+    echo -e "${GREEN}✓ Environment restarted${NC}"
+}
+
+cmd_status() {
+    if [ -f "$PACKAGE_DIR/scripts/status.sh" ]; then
+        bash "$PACKAGE_DIR/scripts/status.sh"
+    else
+        docker_compose ps
+    fi
+}
+
+cmd_logs() {
+    if [ -n "$1" ]; then
+        docker_compose logs -f "$1"
+    else
+        docker_compose logs -f
+    fi
+}
+
+cmd_ports() {
+    docker_compose ps --format 'table {{.Name}}\t{{.Status}}\t{{.Ports}}'
+}
+
+# ==============================================================================
+# Comandos de Projeto (make:laravel, make:env, etc)
+# ==============================================================================
+
+cmd_make_laravel() {
+    local project_name=$1
+    
+    if [ -z "$project_name" ]; then
+        echo -e "${RED}Error: Project name required${NC}"
+        echo -e "Usage: docker-local make:laravel <project-name>"
+        exit 1
+    fi
+    
+    project_name=$(echo "$project_name" | sed 's/[^a-zA-Z0-9_-]/-/g' | tr '[:upper:]' '[:lower:]')
+    
+    local project_path="$PROJECTS_DIR/$project_name"
+    
+    if [ -d "$project_path" ]; then
+        echo -e "${RED}Error: Project '$project_name' already exists at $project_path${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}Creating Laravel project: ${WHITE}$project_name${NC}"
+    echo -e "${DIM}Path: $project_path${NC}"
+    echo ""
+    
+    mkdir -p "$PROJECTS_DIR"
+    
+    local hooks_dir="$PACKAGE_DIR/templates/hooks"
+    if [ -f "$hooks_dir/pre-install.sh" ]; then
+        echo -e "${DIM}Running pre-install hook...${NC}"
+        bash "$hooks_dir/pre-install.sh" "$project_name" "$project_path"
+    fi
+    
+    if command -v composer &> /dev/null; then
+        echo -e "${BLUE}Installing Laravel via local Composer...${NC}"
+        cd "$PROJECTS_DIR"
+        composer create-project laravel/laravel "$project_name"
+    else
+        check_docker_running
+        if ! docker ps --format '{{.Names}}' | grep -q "^php$"; then
+            echo -e "${YELLOW}PHP container not running. Starting environment...${NC}"
+            cmd_up
+            sleep 5
+        fi
+        echo -e "${BLUE}Installing Laravel via Docker...${NC}"
+        docker exec -w /var/www php composer create-project laravel/laravel "$project_name"
+    fi
+    
+    echo -e "${GREEN}✓ Laravel installed${NC}"
+    echo ""
+    
+    echo -e "${BLUE}Configuring .env...${NC}"
+    generate_laravel_env "$project_path" "$project_name"
+    echo -e "${GREEN}✓ .env configured${NC}"
+    
+    echo -e "${BLUE}Generating application key...${NC}"
+    cd "$project_path"
+    if command -v php &> /dev/null; then
+        php artisan key:generate
+    else
+        docker exec -w "/var/www/$project_name" php php artisan key:generate
+    fi
+    echo -e "${GREEN}✓ APP_KEY generated${NC}"
+    
+    if [ -f "$hooks_dir/post-install.sh" ]; then
+        echo -e "${DIM}Running post-install hook...${NC}"
+        bash "$hooks_dir/post-install.sh" "$project_name" "$project_path"
+    fi
+    
+    local install_script="$PACKAGE_DIR/templates/install.sh"
+    if [ -f "$install_script" ]; then
+        echo ""
+        echo -e "${BLUE}Running custom installation script...${NC}"
+        bash "$install_script" "$project_name" "$project_path"
+    fi
+    
+    echo ""
+    echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${GREEN}║                    Project Created! 🎉                        ║${NC}"
+    echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "  ${WHITE}Project:${NC}  $project_name"
+    echo -e "  ${WHITE}Path:${NC}     $project_path"
+    echo -e "  ${WHITE}URL:${NC}      ${CYAN}https://$project_name.test${NC}"
+    echo ""
+    echo -e "  ${WHITE}Next steps:${NC}"
+    echo -e "    cd $project_path"
+    echo -e "    php artisan migrate"
+    echo -e "    docker-local open"
+    echo ""
+}
+
+cmd_make_env() {
+    local current_dir=$(pwd)
+    local env_file="$current_dir/.env"
+    
+    if [ -f "$env_file" ]; then
+        echo -e "${YELLOW}Warning: .env already exists${NC}"
+        echo -e "Use ${CYAN}docker-local update:env${NC} to update existing configuration"
+        echo -e "Or ${CYAN}docker-local env:check${NC} to verify current configuration"
+        exit 1
+    fi
+    
+    local project_name=$(basename "$current_dir")
+    
+    echo -e "${BLUE}Generating .env for: ${WHITE}$project_name${NC}"
+    echo ""
+    
+    # Verificar conflitos antes de criar
+    check_env_conflicts "$project_name" ""
+    
+    generate_laravel_env "$current_dir" "$project_name"
+    
+    echo ""
+    echo -e "${GREEN}✓ .env created with unique identifiers${NC}"
+    echo ""
+    echo -e "${WHITE}Generated unique values:${NC}"
+    echo -e "  • ${CYAN}CACHE_PREFIX${NC}     = ${project_name}_cache_"
+    echo -e "  • ${CYAN}REVERB_APP_ID${NC}    = $(grep "^REVERB_APP_ID=" "$env_file" | cut -d'=' -f2)"
+    echo -e "  • ${CYAN}REVERB_APP_KEY${NC}   = $(grep "^REVERB_APP_KEY=" "$env_file" | cut -d'=' -f2 | head -c 16)..."
+    echo ""
+    echo -e "${WHITE}Next steps:${NC}"
+    echo -e "  1. ${CYAN}php artisan key:generate${NC}"
+    echo -e "  2. ${CYAN}docker-local env:check${NC} to verify configuration"
+}
+
+cmd_update_env() {
+    local current_dir=$(pwd)
+    local env_file="$current_dir/.env"
+    
+    if [ ! -f "$env_file" ]; then
+        echo -e "${RED}Error: .env not found${NC}"
+        echo -e "Use ${CYAN}docker-local make:env${NC} to create a new .env file"
+        exit 1
+    fi
+    
+    local project_name=$(basename "$current_dir")
+    
+    echo -e "${BLUE}Updating .env for: ${WHITE}$project_name${NC}"
+    echo ""
+    
+    # Backup
+    local backup_file="$env_file.backup.$(date +%Y%m%d_%H%M%S)"
+    cp "$env_file" "$backup_file"
+    echo -e "${DIM}Backup saved: $backup_file${NC}"
+    
+    # Preservar valores importantes
+    local app_name=$(grep "^APP_NAME=" "$env_file" | cut -d'=' -f2-)
+    local app_key=$(grep "^APP_KEY=" "$env_file" | cut -d'=' -f2-)
+    local reverb_app_id=$(grep "^REVERB_APP_ID=" "$env_file" | cut -d'=' -f2-)
+    local reverb_app_key=$(grep "^REVERB_APP_KEY=" "$env_file" | cut -d'=' -f2-)
+    local reverb_app_secret=$(grep "^REVERB_APP_SECRET=" "$env_file" | cut -d'=' -f2-)
+    local cache_prefix=$(grep "^CACHE_PREFIX=" "$env_file" | cut -d'=' -f2-)
+    local redis_db=$(grep "^REDIS_DB=" "$env_file" | cut -d'=' -f2-)
+    local redis_cache_db=$(grep "^REDIS_CACHE_DB=" "$env_file" | cut -d'=' -f2-)
+    
+    # Gerar novo .env
+    generate_laravel_env "$current_dir" "$project_name"
+    
+    # Restaurar valores preservados
+    [ -n "$app_name" ] && sed -i "s/^APP_NAME=.*/APP_NAME=$app_name/" "$env_file"
+    [ -n "$app_key" ] && sed -i "s/^APP_KEY=.*/APP_KEY=$app_key/" "$env_file"
+    
+    # Preservar credenciais Reverb existentes (não sobrescrever com novos valores)
+    if [ -n "$reverb_app_id" ]; then
+        sed -i "s/^REVERB_APP_ID=.*/REVERB_APP_ID=$reverb_app_id/" "$env_file"
+    fi
+    if [ -n "$reverb_app_key" ]; then
+        sed -i "s/^REVERB_APP_KEY=.*/REVERB_APP_KEY=$reverb_app_key/" "$env_file"
+    fi
+    if [ -n "$reverb_app_secret" ]; then
+        sed -i "s/^REVERB_APP_SECRET=.*/REVERB_APP_SECRET=$reverb_app_secret/" "$env_file"
+    fi
+    
+    # Preservar configurações Redis existentes
+    [ -n "$cache_prefix" ] && sed -i "s/^CACHE_PREFIX=.*/CACHE_PREFIX=$cache_prefix/" "$env_file"
+    [ -n "$redis_db" ] && sed -i "s/^REDIS_DB=.*/REDIS_DB=$redis_db/" "$env_file"
+    [ -n "$redis_cache_db" ] && sed -i "s/^REDIS_CACHE_DB=.*/REDIS_CACHE_DB=$redis_cache_db/" "$env_file"
+    
+    echo ""
+    echo -e "${GREEN}✓ .env updated${NC}"
+    echo ""
+    echo -e "${WHITE}Preserved values:${NC}"
+    echo -e "  • APP_KEY (your encryption key)"
+    echo -e "  • REVERB_APP_ID, REVERB_APP_KEY, REVERB_APP_SECRET"
+    echo -e "  • CACHE_PREFIX, REDIS_DB, REDIS_CACHE_DB"
+    echo ""
+    echo -e "${WHITE}Next:${NC} Run ${CYAN}docker-local env:check${NC} to verify configuration"
+}
+
+cmd_show_env() {
+    check_docker_env
+    if [ -f "$PACKAGE_DIR/scripts/make-env.sh" ]; then
+        bash "$PACKAGE_DIR/scripts/make-env.sh"
+    fi
+}
+
+# ==============================================================================
+# Função auxiliar para verificar conflitos entre projetos
+# ==============================================================================
+check_env_conflicts() {
+    local current_project="$1"
+    local current_env_file="$2"
+    local has_conflicts=false
+    
+    # Coletar valores do projeto atual (se existir .env)
+    local current_cache_prefix=""
+    local current_reverb_id=""
+    local current_reverb_key=""
+    local current_redis_db=""
+    
+    if [ -n "$current_env_file" ] && [ -f "$current_env_file" ]; then
+        current_cache_prefix=$(grep "^CACHE_PREFIX=" "$current_env_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        current_reverb_id=$(grep "^REVERB_APP_ID=" "$current_env_file" 2>/dev/null | cut -d'=' -f2-)
+        current_reverb_key=$(grep "^REVERB_APP_KEY=" "$current_env_file" 2>/dev/null | cut -d'=' -f2-)
+        current_redis_db=$(grep "^REDIS_DB=" "$current_env_file" 2>/dev/null | cut -d'=' -f2-)
+    fi
+    
+    # Verificar contra outros projetos
+    for project_dir in "$PROJECTS_DIR"/*/; do
+        [ ! -d "$project_dir" ] && continue
+        local other_project=$(basename "$project_dir")
+        local other_env="$project_dir/.env"
+        
+        # Pular projeto atual
+        [ "$other_project" = "$current_project" ] && continue
+        [ ! -f "$other_env" ] && continue
+        
+        local other_cache_prefix=$(grep "^CACHE_PREFIX=" "$other_env" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        local other_reverb_id=$(grep "^REVERB_APP_ID=" "$other_env" 2>/dev/null | cut -d'=' -f2-)
+        local other_reverb_key=$(grep "^REVERB_APP_KEY=" "$other_env" 2>/dev/null | cut -d'=' -f2-)
+        
+        # Verificar conflitos de CACHE_PREFIX
+        if [ -n "$current_cache_prefix" ] && [ "$current_cache_prefix" = "$other_cache_prefix" ]; then
+            echo -e "${RED}⚠ CACHE_PREFIX conflict with '$other_project'${NC}"
+            echo -e "  Both projects use: ${YELLOW}$current_cache_prefix${NC}"
+            echo -e "  ${DIM}This will cause cache data collision between projects${NC}"
+            has_conflicts=true
+        fi
+        
+        # Verificar conflitos de REVERB_APP_ID
+        if [ -n "$current_reverb_id" ] && [ "$current_reverb_id" = "$other_reverb_id" ]; then
+            echo -e "${RED}⚠ REVERB_APP_ID conflict with '$other_project'${NC}"
+            echo -e "  Both projects use: ${YELLOW}$current_reverb_id${NC}"
+            echo -e "  ${DIM}WebSocket messages will be mixed between projects${NC}"
+            has_conflicts=true
+        fi
+        
+        # Verificar conflitos de REVERB_APP_KEY
+        if [ -n "$current_reverb_key" ] && [ "$current_reverb_key" = "$other_reverb_key" ]; then
+            echo -e "${RED}⚠ REVERB_APP_KEY conflict with '$other_project'${NC}"
+            echo -e "  ${DIM}WebSocket authentication will conflict${NC}"
+            has_conflicts=true
+        fi
+    done
+    
+    if [ "$has_conflicts" = true ]; then
+        echo ""
+        return 1
+    fi
+    return 0
+}
+
+# ==============================================================================
+# ENV:CHECK - Verificação completa do .env
+# ==============================================================================
+cmd_env_check() {
+    local check_all=false
+    
+    # Verificar flags
+    if [ "$1" = "--all" ] || [ "$1" = "-a" ]; then
+        cmd_env_audit
+        return
+    fi
+    
+    local current_dir=$(pwd)
+    local env_file="$current_dir/.env"
+    
+    if [ ! -f "$env_file" ]; then
+        echo -e "${RED}Error: .env not found in current directory${NC}"
+        echo ""
+        echo -e "${WHITE}What to do:${NC}"
+        echo -e "  • If this is a new project: ${CYAN}docker-local make:env${NC}"
+        echo -e "  • If you're in wrong directory: ${CYAN}cd ~/projects/your-project${NC}"
+        echo -e "  • To check all projects: ${CYAN}docker-local env:check --all${NC}"
+        exit 1
+    fi
+    
+    local project_name=$(basename "$current_dir")
+    
+    show_logo
+    echo -e "${WHITE}Environment Check: ${CYAN}$project_name${NC}"
+    echo ""
+    
+    # Função local para ler valores
+    get_env_value() {
+        grep "^$1=" "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'"
+    }
+    
+    local errors=0
+    local warnings=0
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # 1. Verificar /etc/hosts
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}┌─ System: /etc/hosts ─────────────────────────────────────────────┐${NC}"
+    local hosts_ok=true
+    for host in mysql postgres redis minio mailpit; do
+        if grep -q "127.0.0.1.*\b$host\b" /etc/hosts 2>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} $host → 127.0.0.1"
+        else
+            echo -e "  ${RED}✗${NC} $host ${DIM}(not configured)${NC}"
+            hosts_ok=false
+        fi
+    done
+    
+    if [ "$hosts_ok" = false ]; then
+        echo ""
+        echo -e "  ${YELLOW}Why:${NC} Local PHP needs these hostnames to connect to Docker services."
+        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}sudo docker-local setup:hosts${NC}"
+        ((warnings++))
+    fi
+    echo ""
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # 2. Verificar Database
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}┌─ Database ───────────────────────────────────────────────────────┐${NC}"
+    local db_connection=$(get_env_value "DB_CONNECTION")
+    local db_host=$(get_env_value "DB_HOST")
+    local db_port=$(get_env_value "DB_PORT")
+    local db_database=$(get_env_value "DB_DATABASE")
+    
+    echo -e "  ${CYAN}Type:${NC} $db_connection | ${CYAN}Host:${NC} $db_host:$db_port | ${CYAN}DB:${NC} $db_database"
+    
+    local container_name="${db_connection:-mysql}"
+    [ "$db_connection" = "pgsql" ] && container_name="postgres"
+    
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^$container_name$"; then
+        echo -e "  ${GREEN}✓${NC} Container '$container_name' is running"
+    else
+        echo -e "  ${RED}✗${NC} Container '$container_name' is not running"
+        echo ""
+        echo -e "  ${YELLOW}Why:${NC} Database container must be running for your app to work."
+        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}docker-local up${NC}"
+        ((errors++))
+    fi
+    echo ""
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # 3. Verificar Redis e Prefixos
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}┌─ Redis & Cache Isolation ────────────────────────────────────────┐${NC}"
+    local redis_host=$(get_env_value "REDIS_HOST")
+    local redis_db=$(get_env_value "REDIS_DB")
+    local redis_cache_db=$(get_env_value "REDIS_CACHE_DB")
+    local cache_prefix=$(get_env_value "CACHE_PREFIX")
+    local app_name=$(get_env_value "APP_NAME")
+    
+    echo -e "  ${CYAN}Host:${NC} $redis_host | ${CYAN}DB:${NC} ${redis_db:-0} | ${CYAN}Cache DB:${NC} ${redis_cache_db:-1}"
+    
+    # Container check
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^redis$"; then
+        echo -e "  ${GREEN}✓${NC} Redis container is running"
+    else
+        echo -e "  ${RED}✗${NC} Redis container is not running"
+        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}docker-local up${NC}"
+        ((errors++))
+    fi
+    
+    # Cache prefix check
+    echo ""
+    echo -e "  ${WHITE}Cache Isolation:${NC}"
+    if [ -n "$cache_prefix" ]; then
+        echo -e "  ${GREEN}✓${NC} CACHE_PREFIX = ${CYAN}$cache_prefix${NC}"
+        
+        # Verificar se o prefixo contém o nome do projeto
+        if [[ "$cache_prefix" == *"$project_name"* ]] || [[ "$cache_prefix" == *"$(echo $app_name | tr -d '"' | tr -d "'")"* ]]; then
+            echo -e "    ${DIM}Good: Prefix includes project identifier${NC}"
+        else
+            echo -e "  ${YELLOW}⚠${NC} Prefix doesn't include project name"
+            echo -e "    ${DIM}Consider: CACHE_PREFIX=${project_name}_cache_${NC}"
+            ((warnings++))
+        fi
+    else
+        echo -e "  ${YELLOW}⚠${NC} CACHE_PREFIX not set"
+        echo ""
+        echo -e "  ${YELLOW}Why:${NC} Without a unique prefix, cache keys from different projects"
+        echo -e "       will collide, causing data corruption and unexpected behavior."
+        echo -e "  ${YELLOW}Fix:${NC} Add to .env: ${CYAN}CACHE_PREFIX=${project_name}_cache_${NC}"
+        ((warnings++))
+    fi
+    echo ""
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # 4. Verificar Reverb/Broadcasting
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}┌─ Reverb (WebSockets) Isolation ──────────────────────────────────┐${NC}"
+    local reverb_app_id=$(get_env_value "REVERB_APP_ID")
+    local reverb_app_key=$(get_env_value "REVERB_APP_KEY")
+    local reverb_app_secret=$(get_env_value "REVERB_APP_SECRET")
+    local broadcast_conn=$(get_env_value "BROADCAST_CONNECTION")
+    
+    echo -e "  ${CYAN}Broadcast:${NC} ${broadcast_conn:-log}"
+    
+    if [ "$broadcast_conn" = "reverb" ] || [ "$broadcast_conn" = "pusher" ]; then
+        if [ -n "$reverb_app_id" ]; then
+            echo -e "  ${GREEN}✓${NC} REVERB_APP_ID = ${CYAN}$reverb_app_id${NC}"
+        else
+            echo -e "  ${RED}✗${NC} REVERB_APP_ID not set"
+            echo ""
+            echo -e "  ${YELLOW}Why:${NC} Each project needs a unique APP_ID to isolate WebSocket channels."
+            echo -e "       Without this, real-time messages will be broadcast to wrong clients."
+            echo -e "  ${YELLOW}Fix:${NC} Run ${CYAN}docker-local update:env${NC} to generate unique values"
+            ((errors++))
+        fi
+        
+        if [ -n "$reverb_app_key" ]; then
+            echo -e "  ${GREEN}✓${NC} REVERB_APP_KEY = ${CYAN}${reverb_app_key:0:16}...${NC}"
+        else
+            echo -e "  ${RED}✗${NC} REVERB_APP_KEY not set"
+            ((errors++))
+        fi
+        
+        if [ -n "$reverb_app_secret" ]; then
+            echo -e "  ${GREEN}✓${NC} REVERB_APP_SECRET = ${CYAN}${reverb_app_secret:0:8}...${NC} ${DIM}(hidden)${NC}"
+        else
+            echo -e "  ${RED}✗${NC} REVERB_APP_SECRET not set"
+            ((errors++))
+        fi
+    else
+        echo -e "  ${DIM}○${NC} Reverb not configured (BROADCAST_CONNECTION=$broadcast_conn)"
+        echo -e "    ${DIM}This is OK if you don't need real-time features${NC}"
+    fi
+    echo ""
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # 5. Verificar conflitos com outros projetos
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}┌─ Cross-Project Conflicts ────────────────────────────────────────┐${NC}"
+    local conflict_output=$(check_env_conflicts "$project_name" "$env_file" 2>&1)
+    
+    if [ -n "$conflict_output" ]; then
+        echo "$conflict_output"
+        ((errors++))
+    else
+        echo -e "  ${GREEN}✓${NC} No conflicts with other projects"
+    fi
+    echo ""
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # 6. Verificar APP_URL e DNS
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}┌─ Application URL ────────────────────────────────────────────────┐${NC}"
+    local app_url=$(get_env_value "APP_URL")
+    echo -e "  ${CYAN}URL:${NC} $app_url"
+    
+    local domain=$(echo "$app_url" | sed -E 's|https?://||' | cut -d'/' -f1 | cut -d':' -f1)
+    
+    if ping -c 1 -W 1 "$domain" > /dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} DNS resolves: $domain → $(ping -c 1 -W 1 "$domain" 2>/dev/null | grep -oP '\(\K[^\)]+' | head -1)"
+    else
+        echo -e "  ${YELLOW}⚠${NC} DNS not resolving: $domain"
+        echo ""
+        echo -e "  ${YELLOW}Why:${NC} Your browser won't be able to access https://$domain"
+        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}sudo docker-local setup:dns${NC}"
+        ((warnings++))
+    fi
+    echo ""
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # RESUMO
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+    if [ $errors -eq 0 ] && [ $warnings -eq 0 ]; then
+        echo -e "${WHITE}║${NC}  ${GREEN}✓ All checks passed!${NC}                                           ${WHITE}║${NC}"
+        echo -e "${WHITE}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "Your .env is correctly configured for multi-project isolation."
+    elif [ $errors -eq 0 ]; then
+        echo -e "${WHITE}║${NC}  ${YELLOW}⚠ $warnings warning(s)${NC} - Works but could be improved              ${WHITE}║${NC}"
+        echo -e "${WHITE}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+    else
+        echo -e "${WHITE}║${NC}  ${RED}✗ $errors error(s)${NC}, ${YELLOW}$warnings warning(s)${NC} - Action required              ${WHITE}║${NC}"
+        echo -e "${WHITE}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+        echo ""
+        echo -e "${WHITE}Quick fixes:${NC}"
+        echo -e "  • Update .env with unique values: ${CYAN}docker-local update:env${NC}"
+        echo -e "  • Start Docker services: ${CYAN}docker-local up${NC}"
+        echo -e "  • Configure system hosts: ${CYAN}sudo docker-local setup:hosts${NC}"
+    fi
+    echo ""
+}
+
+# ==============================================================================
+# ENV:AUDIT - Verificar todos os projetos
+# ==============================================================================
+cmd_env_audit() {
+    show_logo
+    echo -e "${WHITE}Auditing all projects for configuration conflicts...${NC}"
+    echo ""
+    
+    if [ ! -d "$PROJECTS_DIR" ]; then
+        echo -e "${YELLOW}No projects directory found: $PROJECTS_DIR${NC}"
+        exit 1
+    fi
+    
+    local projects=()
+    local cache_prefixes=()
+    local reverb_ids=()
+    local reverb_keys=()
+    local redis_dbs=()
+    local project_count=0
+    local issues=0
+    
+    # Coletar dados de todos os projetos
+    for project_dir in "$PROJECTS_DIR"/*/; do
+        [ ! -d "$project_dir" ] && continue
+        local project_name=$(basename "$project_dir")
+        local env_file="$project_dir/.env"
+        
+        [ ! -f "$env_file" ] && continue
+        
+        ((project_count++))
+        
+        local cache_prefix=$(grep "^CACHE_PREFIX=" "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'")
+        local reverb_id=$(grep "^REVERB_APP_ID=" "$env_file" 2>/dev/null | cut -d'=' -f2-)
+        local reverb_key=$(grep "^REVERB_APP_KEY=" "$env_file" 2>/dev/null | cut -d'=' -f2-)
+        local redis_db=$(grep "^REDIS_DB=" "$env_file" 2>/dev/null | cut -d'=' -f2-)
+        
+        projects+=("$project_name")
+        cache_prefixes+=("${cache_prefix:-NOT_SET}")
+        reverb_ids+=("${reverb_id:-NOT_SET}")
+        reverb_keys+=("${reverb_key:-NOT_SET}")
+        redis_dbs+=("${redis_db:-0}")
+    done
+    
+    if [ $project_count -eq 0 ]; then
+        echo -e "${YELLOW}No projects with .env files found${NC}"
+        exit 0
+    fi
+    
+    echo -e "${WHITE}Found $project_count project(s) with .env files${NC}"
+    echo ""
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # Tabela de configurações
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}┌─ Configuration Overview ─────────────────────────────────────────┐${NC}"
+    printf "  ${WHITE}%-18s %-20s %-12s %-8s${NC}\n" "PROJECT" "CACHE_PREFIX" "REVERB_ID" "REDIS_DB"
+    echo -e "  ${DIM}──────────────────────────────────────────────────────────────────${NC}"
+    
+    for i in "${!projects[@]}"; do
+        local prefix_display="${cache_prefixes[$i]}"
+        [ ${#prefix_display} -gt 18 ] && prefix_display="${prefix_display:0:15}..."
+        
+        local id_display="${reverb_ids[$i]}"
+        [ "$id_display" = "NOT_SET" ] && id_display="${RED}NOT_SET${NC}"
+        
+        printf "  %-18s %-20s %-12s %-8s\n" "${projects[$i]}" "$prefix_display" "$id_display" "${redis_dbs[$i]}"
+    done
+    echo ""
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # Verificar CACHE_PREFIX duplicados
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}┌─ CACHE_PREFIX Analysis ──────────────────────────────────────────┐${NC}"
+    local seen_prefixes=()
+    local prefix_conflicts=false
+    
+    for i in "${!projects[@]}"; do
+        local prefix="${cache_prefixes[$i]}"
+        
+        if [ "$prefix" = "NOT_SET" ]; then
+            echo -e "  ${RED}✗${NC} ${projects[$i]}: ${RED}CACHE_PREFIX not set${NC}"
+            echo -e "    ${YELLOW}Risk:${NC} Will use Laravel default, may conflict with other projects"
+            echo -e "    ${YELLOW}Fix:${NC} cd ~/projects/${projects[$i]} && docker-local update:env"
+            prefix_conflicts=true
+            ((issues++))
+            continue
+        fi
+        
+        for j in "${!seen_prefixes[@]}"; do
+            if [ "${seen_prefixes[$j]}" = "$prefix" ]; then
+                echo -e "  ${RED}✗${NC} Duplicate prefix '${YELLOW}$prefix${NC}'"
+                echo -e "    Used by: ${projects[$j]} and ${projects[$i]}"
+                echo -e "    ${YELLOW}Risk:${NC} Cache data will be shared/corrupted between these projects"
+                echo -e "    ${YELLOW}Fix:${NC} Change CACHE_PREFIX in one of the projects' .env files"
+                prefix_conflicts=true
+                ((issues++))
+            fi
+        done
+        
+        seen_prefixes+=("$prefix")
+    done
+    
+    [ "$prefix_conflicts" = false ] && echo -e "  ${GREEN}✓${NC} All CACHE_PREFIX values are unique"
+    echo ""
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # Verificar REVERB_APP_ID duplicados
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}┌─ REVERB_APP_ID Analysis ─────────────────────────────────────────┐${NC}"
+    local seen_ids=()
+    local id_conflicts=false
+    
+    for i in "${!projects[@]}"; do
+        local rid="${reverb_ids[$i]}"
+        
+        if [ "$rid" = "NOT_SET" ]; then
+            echo -e "  ${YELLOW}○${NC} ${projects[$i]}: REVERB_APP_ID not set"
+            echo -e "    ${DIM}OK if not using WebSockets/Reverb${NC}"
+            continue
+        fi
+        
+        for j in "${!seen_ids[@]}"; do
+            if [ "${seen_ids[$j]}" = "$rid" ]; then
+                echo -e "  ${RED}✗${NC} Duplicate REVERB_APP_ID '${YELLOW}$rid${NC}'"
+                echo -e "    Used by: ${projects[$j]} and ${projects[$i]}"
+                echo -e "    ${YELLOW}Risk:${NC} WebSocket messages will be broadcast to wrong clients"
+                echo -e "    ${YELLOW}Fix:${NC} Regenerate for one project with docker-local update:env"
+                id_conflicts=true
+                ((issues++))
+            fi
+        done
+        
+        seen_ids+=("$rid")
+    done
+    
+    [ "$id_conflicts" = false ] && echo -e "  ${GREEN}✓${NC} All REVERB_APP_ID values are unique (or not set)"
+    echo ""
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # Verificar REVERB_APP_KEY duplicados
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}┌─ REVERB_APP_KEY Analysis ────────────────────────────────────────┐${NC}"
+    local seen_keys=()
+    local key_conflicts=false
+    
+    for i in "${!projects[@]}"; do
+        local rkey="${reverb_keys[$i]}"
+        
+        [ "$rkey" = "NOT_SET" ] && continue
+        
+        for j in "${!seen_keys[@]}"; do
+            if [ "${seen_keys[$j]}" = "$rkey" ]; then
+                echo -e "  ${RED}✗${NC} Duplicate REVERB_APP_KEY"
+                echo -e "    Used by: ${projects[$j]} and ${projects[$i]}"
+                echo -e "    ${YELLOW}Risk:${NC} WebSocket authentication will be compromised"
+                key_conflicts=true
+                ((issues++))
+            fi
+        done
+        
+        seen_keys+=("$rkey")
+    done
+    
+    [ "$key_conflicts" = false ] && echo -e "  ${GREEN}✓${NC} All REVERB_APP_KEY values are unique (or not set)"
+    echo ""
+    
+    # ══════════════════════════════════════════════════════════════════════════
+    # Resumo
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}╔═══════════════════════════════════════════════════════════════════╗${NC}"
+    if [ $issues -eq 0 ]; then
+        echo -e "${WHITE}║${NC}  ${GREEN}✓ All $project_count projects are correctly isolated!${NC}              ${WHITE}║${NC}"
+    else
+        echo -e "${WHITE}║${NC}  ${RED}✗ Found $issues issue(s) across $project_count projects${NC}                       ${WHITE}║${NC}"
+    fi
+    echo -e "${WHITE}╚═══════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    
+    if [ $issues -gt 0 ]; then
+        echo -e "${WHITE}How to fix:${NC}"
+        echo ""
+        echo -e "  ${CYAN}Option 1:${NC} Regenerate .env for affected projects"
+        echo -e "    cd ~/projects/<project-name>"
+        echo -e "    docker-local update:env"
+        echo ""
+        echo -e "  ${CYAN}Option 2:${NC} Manually edit .env files"
+        echo -e "    - CACHE_PREFIX should be unique per project"
+        echo -e "    - REVERB_APP_ID should be a unique number"
+        echo -e "    - REVERB_APP_KEY should be a unique random string"
+        echo ""
+    fi
+}
+
+# ==============================================================================
+# GENERATE LARAVEL ENV - Create .env for Laravel project
+# ==============================================================================
+
+generate_laravel_env() {
+    local project_path=$1
+    local project_name=$2
+    local env_file="$project_path/.env"
+    
+    local mysql_host="mysql"
+    local mysql_port="${MYSQL_PORT:-3306}"
+    local mysql_database="${MYSQL_DATABASE:-laravel}"
+    local mysql_user="${MYSQL_USER:-laravel}"
+    local mysql_password="${MYSQL_PASSWORD:-secret}"
+    
+    local postgres_host="postgres"
+    local postgres_port="${POSTGRES_PORT:-5432}"
+    local postgres_database="${POSTGRES_DATABASE:-laravel}"
+    local postgres_user="${POSTGRES_USER:-laravel}"
+    local postgres_password="${POSTGRES_PASSWORD:-secret}"
+    
+    local redis_host="redis"
+    local redis_port="${REDIS_PORT:-6379}"
+    
+    local minio_host="minio"
+    local minio_api_port="${MINIO_API_PORT:-9000}"
+    local minio_user="${MINIO_ROOT_USER:-minio}"
+    local minio_password="${MINIO_ROOT_PASSWORD:-minio123}"
+    local minio_bucket="${MINIO_BUCKET:-laravel}"
+    
+    local mailpit_host="mailpit"
+    local mailpit_port="${MAILPIT_SMTP_PORT:-1025}"
+    
+    # Gerar IDs únicos para Reverb
+    local reverb_app_id=$(shuf -i 100000-999999 -n 1)
+    local reverb_app_key=$(openssl rand -hex 16 2>/dev/null || head -c 32 /dev/urandom | xxd -p | head -c 32)
+    local reverb_app_secret=$(openssl rand -hex 16 2>/dev/null || head -c 32 /dev/urandom | xxd -p | head -c 32)
+    
+    cat > "$env_file" << EOF
+# ==============================================================================
+# Laravel Docker Environment - $project_name
+# Generated: $(date '+%Y-%m-%d %H:%M:%S')
+# ==============================================================================
+
+APP_NAME="$project_name"
+APP_ENV=local
+APP_KEY=
+APP_DEBUG=true
+APP_TIMEZONE=America/Sao_Paulo
+APP_URL=https://$project_name.test
+
+APP_LOCALE=pt_BR
+APP_FALLBACK_LOCALE=en
+APP_FAKER_LOCALE=pt_BR
+
+LOG_CHANNEL=stack
+LOG_STACK=single
+LOG_DEPRECATIONS_CHANNEL=null
+LOG_LEVEL=debug
+
+# ==============================================================================
+# Database - MySQL
+# ==============================================================================
+DB_CONNECTION=mysql
+DB_HOST=$mysql_host
+DB_PORT=$mysql_port
+DB_DATABASE=$mysql_database
+DB_USERNAME=$mysql_user
+DB_PASSWORD=$mysql_password
+DB_CHARSET=utf8mb4
+DB_COLLATION=utf8mb4_unicode_ci
+
+# PostgreSQL (uncomment to use)
+# DB_CONNECTION=pgsql
+# DB_HOST=$postgres_host
+# DB_PORT=$postgres_port
+# DB_DATABASE=$postgres_database
+# DB_USERNAME=$postgres_user
+# DB_PASSWORD=$postgres_password
+
+# ==============================================================================
+# Redis - Multiple Projects Support
+# ==============================================================================
+# Cada projeto usa prefixos únicos baseados em APP_NAME para evitar colisões.
+# O Laravel automaticamente gera: {APP_NAME}_database_ e {APP_NAME}_cache_
+# Você também pode usar databases diferentes (0-15) por projeto.
+# ==============================================================================
+REDIS_CLIENT=phpredis
+REDIS_HOST=$redis_host
+REDIS_PASSWORD=null
+REDIS_PORT=$redis_port
+
+# Database numbers - mude para evitar colisão com outros projetos
+REDIS_DB=0
+REDIS_CACHE_DB=1
+
+# Prefixos explícitos (opcional - já deriva de APP_NAME por padrão)
+# Descomente apenas se quiser sobrescrever os defaults
+# REDIS_PREFIX="${project_name}_database_"
+# CACHE_PREFIX="${project_name}_cache_"
+
+# ==============================================================================
+# Cache, Session, Queue (usando Redis)
+# ==============================================================================
+CACHE_STORE=redis
+SESSION_DRIVER=redis
+QUEUE_CONNECTION=redis
+BROADCAST_CONNECTION=reverb
+
+# Prefixo de cache único para este projeto
+CACHE_PREFIX=${project_name}_cache_
+
+# ==============================================================================
+# MinIO (S3-Compatible Storage)
+# Console: http://localhost:${MINIO_CONSOLE_PORT:-9001}
+# ==============================================================================
+FILESYSTEM_DISK=s3
+
+AWS_ACCESS_KEY_ID=$minio_user
+AWS_SECRET_ACCESS_KEY=$minio_password
+AWS_DEFAULT_REGION=us-east-1
+AWS_BUCKET=$minio_bucket
+AWS_ENDPOINT=http://$minio_host:$minio_api_port
+AWS_USE_PATH_STYLE_ENDPOINT=true
+AWS_URL=http://localhost:$minio_api_port/$minio_bucket
+
+# ==============================================================================
+# Mailpit
+# Web UI: http://localhost:${MAILPIT_WEB_PORT:-8025}
+# ==============================================================================
+MAIL_MAILER=smtp
+MAIL_HOST=$mailpit_host
+MAIL_PORT=$mailpit_port
+MAIL_USERNAME=null
+MAIL_PASSWORD=null
+MAIL_ENCRYPTION=null
+MAIL_FROM_ADDRESS="noreply@$project_name.test"
+MAIL_FROM_NAME="\${APP_NAME}"
+
+# ==============================================================================
+# Laravel Reverb (WebSockets) - Multiple Projects Support
+# ==============================================================================
+# Cada projeto PRECISA de APP_ID, APP_KEY e APP_SECRET únicos!
+# Os valores abaixo foram gerados automaticamente para este projeto.
+# ==============================================================================
+REVERB_APP_ID=$reverb_app_id
+REVERB_APP_KEY=$reverb_app_key
+REVERB_APP_SECRET=$reverb_app_secret
+REVERB_HOST="localhost"
+REVERB_PORT=8080
+REVERB_SCHEME=http
+
+VITE_APP_NAME="\${APP_NAME}"
+VITE_REVERB_APP_KEY="\${REVERB_APP_KEY}"
+VITE_REVERB_HOST="\${REVERB_HOST}"
+VITE_REVERB_PORT="\${REVERB_PORT}"
+VITE_REVERB_SCHEME="\${REVERB_SCHEME}"
+EOF
+}
+
+# ==============================================================================
+# ENV:CHECK - Verificar configurações
+# ==============================================================================
+
+cmd_env_check() {
+    local current_dir=$(pwd)
+    local env_file="$current_dir/.env"
+    
+    if [ ! -f "$env_file" ]; then
+        echo -e "${RED}Error: .env not found${NC}"
+        exit 1
+    fi
+    
+    local project_name=$(basename "$current_dir")
+    
+    show_logo
+    echo -e "${WHITE}Checking .env for: ${CYAN}$project_name${NC}"
+    echo ""
+    
+    get_env_value() {
+        grep "^$1=" "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'"
+    }
+    
+    local errors=0
+    local warnings=0
+    
+    # Hosts check
+    echo -e "${WHITE}┌─ /etc/hosts ─────────────────────────────────────────────────────┐${NC}"
+    local hosts_ok=true
+    for host in mysql postgres redis minio mailpit; do
+        if grep -q "127.0.0.1.*\b$host\b" /etc/hosts 2>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} $host"
+        else
+            echo -e "  ${RED}✗${NC} $host"
+            hosts_ok=false
+        fi
+    done
+    [ "$hosts_ok" = false ] && echo -e "  ${YELLOW}Run: sudo docker-local setup:hosts${NC}" && ((warnings++))
+    echo ""
+    
+    # Database
+    echo -e "${WHITE}┌─ Database ───────────────────────────────────────────────────────┐${NC}"
+    local db_connection=$(get_env_value "DB_CONNECTION")
+    local db_host=$(get_env_value "DB_HOST")
+    local db_port=$(get_env_value "DB_PORT")
+    
+    echo -e "  ${CYAN}Type:${NC} $db_connection | ${CYAN}Host:${NC} $db_host:$db_port"
+    
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^$db_connection$\|^mysql$\|^postgres$"; then
+        echo -e "  ${GREEN}✓${NC} Container running"
+        
+        if docker exec ${db_connection:-mysql} echo "OK" > /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} Connection OK"
+        else
+            echo -e "  ${RED}✗${NC} Connection failed"
+            ((errors++))
+        fi
+    else
+        echo -e "  ${RED}✗${NC} Container not running"
+        ((errors++))
+    fi
+    echo ""
+    
+    # Redis
+    echo -e "${WHITE}┌─ Redis ──────────────────────────────────────────────────────────┐${NC}"
+    local redis_host=$(get_env_value "REDIS_HOST")
+    echo -e "  ${CYAN}Host:${NC} $redis_host"
+    
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^redis$"; then
+        echo -e "  ${GREEN}✓${NC} Container running"
+        if docker exec redis redis-cli ping 2>/dev/null | grep -q "PONG"; then
+            echo -e "  ${GREEN}✓${NC} PING OK"
+        fi
+    else
+        echo -e "  ${RED}✗${NC} Container not running"
+        ((errors++))
+    fi
+    echo ""
+    
+    # APP_URL
+    echo -e "${WHITE}┌─ Application ────────────────────────────────────────────────────┐${NC}"
+    local app_url=$(get_env_value "APP_URL")
+    echo -e "  ${CYAN}URL:${NC} $app_url"
+    
+    local domain=$(echo "$app_url" | sed -E 's|https?://||' | cut -d'/' -f1)
+    if ping -c 1 -W 1 "$domain" > /dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} DNS resolves"
+    else
+        echo -e "  ${YELLOW}⚠${NC} DNS not resolving"
+        ((warnings++))
+    fi
+    echo ""
+    
+    # Summary
+    echo -e "${WHITE}┌─ Summary ────────────────────────────────────────────────────────┐${NC}"
+    if [ $errors -eq 0 ] && [ $warnings -eq 0 ]; then
+        echo -e "  ${GREEN}✓ All checks passed!${NC}"
+    else
+        [ $errors -gt 0 ] && echo -e "  ${RED}✗ $errors error(s)${NC}"
+        [ $warnings -gt 0 ] && echo -e "  ${YELLOW}⚠ $warnings warning(s)${NC}"
+    fi
+    echo ""
+}
+
+# ==============================================================================
+# Database Commands
+# ==============================================================================
+
+cmd_db_create() {
+    local db_name=$1
+    
+    if [ -z "$db_name" ]; then
+        echo -e "${RED}Error: Database name required${NC}"
+        exit 1
+    fi
+    
+    check_docker_running
+    
+    echo -e "${BLUE}Creating database: ${WHITE}$db_name${NC}"
+    
+    printf "  MySQL:      "
+    if docker exec mysql mysql -u root -p"${MYSQL_ROOT_PASSWORD:-secret}" -e "CREATE DATABASE IF NOT EXISTS \`$db_name\`;" 2>/dev/null; then
+        echo -e "${GREEN}✓${NC}"
+    else
+        echo -e "${RED}✗${NC}"
+    fi
+    
+    printf "  PostgreSQL: "
+    if docker exec postgres psql -U "${POSTGRES_USER:-laravel}" -c "CREATE DATABASE $db_name;" 2>/dev/null; then
+        echo -e "${GREEN}✓${NC}"
+    else
+        echo -e "${YELLOW}○${NC}"
+    fi
+}
+
+cmd_db_mysql() {
+    check_docker_running
+    docker exec -it mysql mysql -u "${MYSQL_USER:-laravel}" -p"${MYSQL_PASSWORD:-secret}" "${MYSQL_DATABASE:-laravel}"
+}
+
+cmd_db_postgres() {
+    check_docker_running
+    docker exec -it postgres psql -U "${POSTGRES_USER:-laravel}" "${POSTGRES_DATABASE:-laravel}"
+}
+
+cmd_db_redis() {
+    check_docker_running
+    docker exec -it redis redis-cli
+}
+
+# ==============================================================================
+# Shell e outros
+# ==============================================================================
+
+cmd_shell() {
+    check_docker_running
+    local project_name=$(get_current_project)
+    
+    if [ -n "$project_name" ]; then
+        docker exec -it -w "/var/www/$project_name" php sh
+    else
+        docker exec -it php sh
+    fi
+}
+
+cmd_setup() {
+    check_docker_env
+    if [ -f "$PACKAGE_DIR/scripts/setup.sh" ]; then
+        bash "$PACKAGE_DIR/scripts/setup.sh"
+    fi
+}
+
+cmd_setup_dns() {
+    check_sudo "setup:dns"
+    check_docker_env
+    bash "$PACKAGE_DIR/scripts/setup-dns.sh"
+}
+
+cmd_setup_hosts() {
+    check_sudo "setup:hosts"
+    check_docker_env
+    bash "$PACKAGE_DIR/scripts/setup-hosts.sh"
+}
+
+cmd_config() {
+    echo -e "${WHITE}Configuration:${NC}"
+    echo ""
+    echo -e "  ${CYAN}PACKAGE_DIR:${NC}    $PACKAGE_DIR"
+    echo -e "  ${CYAN}CONFIG_DIR:${NC}     $CONFIG_DIR"
+    echo -e "  ${CYAN}PROJECTS_DIR:${NC}   $PROJECTS_DIR"
+    echo -e "  ${CYAN}VERSION:${NC}        $VERSION"
+    echo ""
+    echo -e "${WHITE}Config File:${NC}"
+    echo ""
+    if [ -f "$CONFIG_DIR/config.json" ]; then
+        echo -e "  ${GREEN}✓${NC} $CONFIG_DIR/config.json"
+    else
+        echo -e "  ${YELLOW}○${NC} $CONFIG_DIR/config.json (not created yet)"
+    fi
+    echo ""
+    echo -e "${WHITE}Service Ports:${NC}"
+    echo ""
+    echo -e "  MySQL:      ${CYAN}localhost:${MYSQL_PORT:-3306}${NC}"
+    echo -e "  PostgreSQL: ${CYAN}localhost:${POSTGRES_PORT:-5432}${NC}"
+    echo -e "  Redis:      ${CYAN}localhost:${REDIS_PORT:-6379}${NC}"
+    echo -e "  MinIO:      ${CYAN}localhost:${MINIO_API_PORT:-9000}${NC} (API) / ${CYAN}${MINIO_CONSOLE_PORT:-9001}${NC} (Console)"
+    echo -e "  Mailpit:    ${CYAN}localhost:${MAILPIT_SMTP_PORT:-1025}${NC} (SMTP) / ${CYAN}${MAILPIT_WEB_PORT:-8025}${NC} (Web)"
+    echo ""
+}
+
+cmd_self_update() {
+    echo -e "${BLUE}Updating docker-local...${NC}"
+    echo ""
+
+    if command -v composer &> /dev/null; then
+        echo -e "${CYAN}Running: composer global update mwguerra/docker-local${NC}"
+        composer global update mwguerra/docker-local
+        echo ""
+        echo -e "${GREEN}✓ Updated${NC}"
+    else
+        echo -e "${RED}Error: Composer not found${NC}"
+        echo -e "Please update manually with:"
+        echo -e "  ${CYAN}composer global update mwguerra/docker-local${NC}"
+        exit 1
+    fi
+}
+
+# ==============================================================================
+# STARTUP - Configure automatic startup on boot
+# ==============================================================================
+
+cmd_startup() {
+    local action="${1:-status}"
+
+    case "$action" in
+        enable)
+            cmd_startup_enable
+            ;;
+        disable)
+            cmd_startup_disable
+            ;;
+        status)
+            cmd_startup_status
+            ;;
+        *)
+            echo -e "${WHITE}Usage:${NC} docker-local startup [enable|disable|status]"
+            echo ""
+            echo -e "  ${GREEN}enable${NC}   Configure docker-local to start on boot"
+            echo -e "  ${GREEN}disable${NC}  Remove automatic startup configuration"
+            echo -e "  ${GREEN}status${NC}   Check current startup configuration"
+            ;;
+    esac
+}
+
+cmd_startup_enable() {
+    show_logo
+    echo -e "${WHITE}Configuring automatic startup...${NC}"
+    echo ""
+
+    case "$PLATFORM" in
+        linux)
+            cmd_startup_enable_linux
+            ;;
+        macos)
+            cmd_startup_enable_macos
+            ;;
+        wsl)
+            cmd_startup_enable_wsl
+            ;;
+        *)
+            echo -e "${RED}Automatic startup is not supported on this platform.${NC}"
+            echo -e "Platform detected: $PLATFORM"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_startup_enable_linux() {
+    local service_file="/etc/systemd/system/docker-local.service"
+    local docker_local_path="$(which docker-local 2>/dev/null || echo "$HOME/.composer/vendor/bin/docker-local")"
+
+    echo -e "${CYAN}Creating systemd service...${NC}"
+
+    # Create service file
+    sudo tee "$service_file" > /dev/null << EOF
+[Unit]
+Description=Docker Local Development Environment
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=$USER
+Environment="HOME=$HOME"
+Environment="PATH=$HOME/.composer/vendor/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=$docker_local_path up
+ExecStop=$docker_local_path down
+WorkingDirectory=$HOME
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    # Enable the service
+    sudo systemctl daemon-reload
+    sudo systemctl enable docker-local.service
+
+    echo ""
+    echo -e "${GREEN}✓ Systemd service created and enabled${NC}"
+    echo ""
+    echo -e "${WHITE}Commands:${NC}"
+    echo -e "  ${CYAN}sudo systemctl start docker-local${NC}   - Start now"
+    echo -e "  ${CYAN}sudo systemctl stop docker-local${NC}    - Stop"
+    echo -e "  ${CYAN}sudo systemctl status docker-local${NC}  - Check status"
+    echo ""
+    echo -e "${YELLOW}Note:${NC} The environment will start automatically on next boot."
+}
+
+cmd_startup_enable_macos() {
+    local plist_file="$HOME/Library/LaunchAgents/com.mwguerra.docker-local.plist"
+    local docker_local_path="$(which docker-local 2>/dev/null || echo "$HOME/.composer/vendor/bin/docker-local")"
+
+    echo -e "${CYAN}Creating LaunchAgent...${NC}"
+
+    # Ensure directory exists
+    mkdir -p "$HOME/Library/LaunchAgents"
+
+    # Create plist file
+    cat > "$plist_file" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.mwguerra.docker-local</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>$docker_local_path</string>
+        <string>up</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>$HOME/.config/docker-local/logs/startup.log</string>
+    <key>StandardErrorPath</key>
+    <string>$HOME/.config/docker-local/logs/startup-error.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:$HOME/.composer/vendor/bin</string>
+    </dict>
+</dict>
+</plist>
+EOF
+
+    # Create logs directory
+    mkdir -p "$HOME/.config/docker-local/logs"
+
+    # Load the agent
+    launchctl load "$plist_file" 2>/dev/null || true
+
+    echo ""
+    echo -e "${GREEN}✓ LaunchAgent created and loaded${NC}"
+    echo ""
+    echo -e "${WHITE}Commands:${NC}"
+    echo -e "  ${CYAN}launchctl start com.mwguerra.docker-local${NC}  - Start now"
+    echo -e "  ${CYAN}launchctl stop com.mwguerra.docker-local${NC}   - Stop"
+    echo ""
+    echo -e "${YELLOW}Note:${NC} The environment will start automatically on next login."
+    echo -e "${YELLOW}Important:${NC} Make sure Docker Desktop is set to start on login too!"
+}
+
+cmd_startup_enable_wsl() {
+    local startup_script="$HOME/.config/docker-local/wsl-startup.sh"
+    local bashrc_marker="# docker-local startup"
+
+    echo -e "${CYAN}Configuring WSL startup...${NC}"
+    echo ""
+
+    # Create startup script
+    mkdir -p "$(dirname "$startup_script")"
+    cat > "$startup_script" << 'EOF'
+#!/bin/bash
+# docker-local WSL startup script
+# Waits for Docker to be available and starts the environment
+
+wait_for_docker() {
+    local max_attempts=30
+    local attempt=0
+
+    while [ $attempt -lt $max_attempts ]; do
+        if docker info &>/dev/null; then
+            return 0
+        fi
+        sleep 2
+        ((attempt++))
+    done
+    return 1
+}
+
+# Only run if not already started in this session
+if [ ! -f /tmp/docker-local-started ]; then
+    if wait_for_docker; then
+        docker-local up &>/dev/null &
+        touch /tmp/docker-local-started
+    fi
+fi
+EOF
+    chmod +x "$startup_script"
+
+    # Add to .bashrc if not already present
+    if ! grep -q "$bashrc_marker" "$HOME/.bashrc" 2>/dev/null; then
+        cat >> "$HOME/.bashrc" << EOF
+
+$bashrc_marker
+if [ -f "$startup_script" ]; then
+    source "$startup_script"
+fi
+EOF
+    fi
+
+    echo -e "${GREEN}✓ WSL startup script created${NC}"
+    echo ""
+    echo -e "${WHITE}How it works:${NC}"
+    echo -e "  1. When you open a WSL terminal, the script checks if Docker is ready"
+    echo -e "  2. Once Docker is available, docker-local starts in the background"
+    echo -e "  3. This only happens once per Windows session"
+    echo ""
+    echo -e "${YELLOW}Important:${NC}"
+    echo -e "  - Make sure Docker Desktop is set to start on Windows login"
+    echo -e "  - Enable 'Start Docker Desktop when you sign in' in Docker Desktop settings"
+    echo ""
+    echo -e "${WHITE}To start now:${NC}"
+    echo -e "  ${CYAN}source ~/.bashrc${NC}"
+}
+
+cmd_startup_disable() {
+    show_logo
+    echo -e "${WHITE}Disabling automatic startup...${NC}"
+    echo ""
+
+    case "$PLATFORM" in
+        linux)
+            cmd_startup_disable_linux
+            ;;
+        macos)
+            cmd_startup_disable_macos
+            ;;
+        wsl)
+            cmd_startup_disable_wsl
+            ;;
+        *)
+            echo -e "${YELLOW}No startup configuration to disable.${NC}"
+            ;;
+    esac
+}
+
+cmd_startup_disable_linux() {
+    local service_file="/etc/systemd/system/docker-local.service"
+
+    if [ -f "$service_file" ]; then
+        sudo systemctl stop docker-local.service 2>/dev/null || true
+        sudo systemctl disable docker-local.service 2>/dev/null || true
+        sudo rm -f "$service_file"
+        sudo systemctl daemon-reload
+        echo -e "${GREEN}✓ Systemd service removed${NC}"
+    else
+        echo -e "${YELLOW}No systemd service found.${NC}"
+    fi
+}
+
+cmd_startup_disable_macos() {
+    local plist_file="$HOME/Library/LaunchAgents/com.mwguerra.docker-local.plist"
+
+    if [ -f "$plist_file" ]; then
+        launchctl unload "$plist_file" 2>/dev/null || true
+        rm -f "$plist_file"
+        echo -e "${GREEN}✓ LaunchAgent removed${NC}"
+    else
+        echo -e "${YELLOW}No LaunchAgent found.${NC}"
+    fi
+}
+
+cmd_startup_disable_wsl() {
+    local startup_script="$HOME/.config/docker-local/wsl-startup.sh"
+    local bashrc_marker="# docker-local startup"
+
+    # Remove startup script
+    rm -f "$startup_script"
+
+    # Remove from .bashrc
+    if grep -q "$bashrc_marker" "$HOME/.bashrc" 2>/dev/null; then
+        # Create temp file without the startup lines
+        grep -v "$bashrc_marker" "$HOME/.bashrc" | grep -v "wsl-startup.sh" > "$HOME/.bashrc.tmp"
+        mv "$HOME/.bashrc.tmp" "$HOME/.bashrc"
+    fi
+
+    echo -e "${GREEN}✓ WSL startup script removed${NC}"
+}
+
+cmd_startup_status() {
+    show_logo
+    echo -e "${WHITE}Startup Configuration Status${NC}"
+    echo ""
+
+    case "$PLATFORM" in
+        linux)
+            if systemctl is-enabled docker-local.service &>/dev/null; then
+                echo -e "  ${GREEN}●${NC} Automatic startup is ${GREEN}enabled${NC} (systemd)"
+                echo ""
+                echo -e "  Service status:"
+                systemctl status docker-local.service --no-pager 2>/dev/null | head -5 | sed 's/^/    /'
+            else
+                echo -e "  ${YELLOW}○${NC} Automatic startup is ${YELLOW}disabled${NC}"
+                echo ""
+                echo -e "  Run ${CYAN}docker-local startup enable${NC} to enable."
+            fi
+            ;;
+        macos)
+            local plist_file="$HOME/Library/LaunchAgents/com.mwguerra.docker-local.plist"
+            if [ -f "$plist_file" ]; then
+                echo -e "  ${GREEN}●${NC} Automatic startup is ${GREEN}enabled${NC} (LaunchAgent)"
+                echo ""
+                echo -e "  Plist: $plist_file"
+            else
+                echo -e "  ${YELLOW}○${NC} Automatic startup is ${YELLOW}disabled${NC}"
+                echo ""
+                echo -e "  Run ${CYAN}docker-local startup enable${NC} to enable."
+            fi
+            ;;
+        wsl)
+            local startup_script="$HOME/.config/docker-local/wsl-startup.sh"
+            if [ -f "$startup_script" ] && grep -q "docker-local startup" "$HOME/.bashrc" 2>/dev/null; then
+                echo -e "  ${GREEN}●${NC} Automatic startup is ${GREEN}enabled${NC} (WSL bashrc)"
+                echo ""
+                echo -e "  Script: $startup_script"
+            else
+                echo -e "  ${YELLOW}○${NC} Automatic startup is ${YELLOW}disabled${NC}"
+                echo ""
+                echo -e "  Run ${CYAN}docker-local startup enable${NC} to enable."
+            fi
+            ;;
+        *)
+            echo -e "  ${RED}●${NC} Platform not supported: $PLATFORM"
+            ;;
+    esac
+    echo ""
+}
+
+# ==============================================================================
+# Main
+# ==============================================================================
+
+case "$1" in
+    # Setup
+    init) cmd_init ;;
+    doctor) cmd_doctor ;;
+    setup) cmd_setup ;;
+    setup:dns) cmd_setup_dns ;;
+    setup:hosts) cmd_setup_hosts ;;
+    
+    # Environment
+    up) cmd_up ;;
+    down) cmd_down ;;
+    restart) cmd_restart ;;
+    status) cmd_status ;;
+    logs) shift; cmd_logs "$@" ;;
+    ports) cmd_ports ;;
+    update) cmd_update ;;
+    clean) shift; cmd_clean "$@" ;;
+    
+    # Projects
+    list|ls) cmd_list ;;
+    make:laravel) shift; cmd_make_laravel "$@" ;;
+    clone) shift; cmd_clone "$@" ;;
+    open) shift; cmd_open "$@" ;;
+    ide) shift; cmd_ide "$@" ;;
+    env:check|check:env) shift; cmd_env_check "$@" ;;
+    env:audit) cmd_env_audit ;;
+    make:env) cmd_make_env ;;
+    update:env) cmd_update_env ;;
+    show:env) cmd_show_env ;;
+    
+    # Development
+    tinker) cmd_tinker ;;
+    test) shift; cmd_test "$@" ;;
+    require) shift; cmd_require "$@" ;;
+    logs:laravel) cmd_logs_laravel ;;
+    
+    # Artisan shortcuts
+    new:model) shift; cmd_new_model "$@" ;;
+    new:controller) shift; cmd_new_controller "$@" ;;
+    new:migration) shift; cmd_new_migration "$@" ;;
+    new:seeder) shift; cmd_new_seeder "$@" ;;
+    new:factory) shift; cmd_new_factory "$@" ;;
+    new:request) shift; cmd_new_request "$@" ;;
+    new:resource) shift; cmd_new_resource "$@" ;;
+    new:middleware) shift; cmd_new_middleware "$@" ;;
+    new:event) shift; cmd_new_event "$@" ;;
+    new:job) shift; cmd_new_job "$@" ;;
+    new:mail) shift; cmd_new_mail "$@" ;;
+    new:command) shift; cmd_new_command "$@" ;;
+    
+    # Database
+    db:mysql|mysql) cmd_db_mysql ;;
+    db:postgres|postgres) cmd_db_postgres ;;
+    db:redis|redis) cmd_db_redis ;;
+    db:create) shift; cmd_db_create "$@" ;;
+    db:dump) shift; cmd_db_dump "$@" ;;
+    db:restore) shift; cmd_db_restore "$@" ;;
+    db:fresh) cmd_db_fresh ;;
+    
+    # Queue
+    queue:work) cmd_queue_work ;;
+    queue:restart) cmd_queue_restart ;;
+    queue:failed) cmd_queue_failed ;;
+    queue:retry) shift; cmd_queue_retry "$@" ;;
+    queue:clear) cmd_queue_clear ;;
+    
+    # Xdebug
+    xdebug) shift; cmd_xdebug "$@" ;;
+
+    # Startup
+    startup) shift; cmd_startup "$@" ;;
+
+    # Other
+    shell|sh) cmd_shell ;;
+    config) cmd_config ;;
+    completion) shift; cmd_completion "$@" ;;
+    self-update) cmd_self_update ;;
+    
+    help|--help|-h|"") show_help ;;
+    version|--version|-v) echo "docker-local v${VERSION}" ;;
+    
+    *)
+        echo -e "${RED}Unknown command: $1${NC}"
+        echo -e "Run ${CYAN}docker-local help${NC} for usage"
+        exit 1
+        ;;
+esac

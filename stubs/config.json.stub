@@ -1,0 +1,41 @@
+{
+  "version": "2.0.0",
+  "projects_path": "~/projects",
+  "docker_files_path": "~/.config/docker-local",
+  "editor": "code",
+  "default_php_version": "8.4",
+  "mysql": {
+    "version": "9.1",
+    "port": 3306,
+    "root_password": "secret",
+    "database": "laravel",
+    "user": "laravel",
+    "password": "secret"
+  },
+  "postgres": {
+    "version": "17",
+    "port": 5432,
+    "database": "laravel",
+    "user": "laravel",
+    "password": "secret"
+  },
+  "redis": {
+    "version": "8",
+    "port": 6379
+  },
+  "minio": {
+    "api_port": 9000,
+    "console_port": 9001,
+    "root_user": "minio",
+    "root_password": "minio123",
+    "bucket": "laravel"
+  },
+  "mailpit": {
+    "web_port": 8025,
+    "smtp_port": 1025
+  },
+  "xdebug": {
+    "enabled": true,
+    "mode": "develop,debug"
+  }
+}

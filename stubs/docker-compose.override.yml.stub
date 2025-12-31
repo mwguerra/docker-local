@@ -1,0 +1,240 @@
+# ==============================================================================
+# Docker Compose Override - Project-Specific Customizations
+# ==============================================================================
+# This file allows you to override or extend the default docker-compose.yml
+# provided by mwguerra/docker-local.
+#
+# Place this file at: ~/.config/docker-local/docker-compose.override.yml
+# Or in your project root: ./docker-compose.override.yml
+#
+# Usage:
+#   docker-compose up -d                     # Start core services
+#   docker-compose --profile streaming up -d # Include RTMP server
+#   docker-compose --profile node up -d      # Include Node.js container
+#   docker-compose --profile laravel up -d   # Include Laravel workers
+#
+# See: https://docs.docker.com/compose/extends/
+# ==============================================================================
+
+services:
+  # ============================================================================
+  # PHP CUSTOMIZATIONS
+  # ============================================================================
+  # Uncomment to add custom PHP configuration or extensions
+  # php:
+  #   volumes:
+  #     - ./php/custom.ini:/usr/local/etc/php/conf.d/99-custom.ini:ro
+  #   environment:
+  #     - PHP_MEMORY_LIMIT=1G  # Override for heavy workloads
+
+  # ============================================================================
+  # LARAVEL HORIZON - Queue Worker
+  # ============================================================================
+  # Processes background jobs using Laravel Horizon
+  # Enable with: docker-compose --profile laravel up -d
+  #
+  # horizon:
+  #   build:
+  #     context: ./php
+  #     dockerfile: Dockerfile
+  #   container_name: horizon
+  #   restart: unless-stopped
+  #   profiles:
+  #     - laravel
+  #   working_dir: /var/www/${PROJECT_NAME:-myapp}
+  #   volumes:
+  #     - ${PROJECTS_PATH:-../projects}:/var/www:cached
+  #   networks:
+  #     - laravel-dev
+  #   depends_on:
+  #     - redis
+  #     - postgres
+  #   command: php artisan horizon
+  #   healthcheck:
+  #     test: ["CMD", "php", "artisan", "horizon:status"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+
+  # ============================================================================
+  # LARAVEL REVERB - WebSocket Server
+  # ============================================================================
+  # Real-time WebSocket server for Laravel applications
+  # Enable with: docker-compose --profile laravel up -d
+  #
+  # reverb:
+  #   build:
+  #     context: ./php
+  #     dockerfile: Dockerfile
+  #   container_name: reverb
+  #   restart: unless-stopped
+  #   profiles:
+  #     - laravel
+  #   working_dir: /var/www/${PROJECT_NAME:-myapp}
+  #   volumes:
+  #     - ${PROJECTS_PATH:-../projects}:/var/www:cached
+  #   ports:
+  #     - "${REVERB_PORT:-8080}:8080"
+  #   networks:
+  #     - laravel-dev
+  #   depends_on:
+  #     - redis
+  #   command: php artisan reverb:start --host=0.0.0.0 --port=8080
+  #   labels:
+  #     - "traefik.enable=true"
+  #     - "traefik.http.routers.reverb.rule=Host(`ws.localhost`)"
+  #     - "traefik.http.routers.reverb.entrypoints=websecure"
+  #     - "traefik.http.routers.reverb.tls=true"
+  #     - "traefik.http.services.reverb.loadbalancer.server.port=8080"
+
+  # ============================================================================
+  # LARAVEL SCHEDULER - Cron Jobs
+  # ============================================================================
+  # Runs Laravel scheduled tasks every minute
+  # Enable with: docker-compose --profile laravel up -d
+  #
+  # scheduler:
+  #   build:
+  #     context: ./php
+  #     dockerfile: Dockerfile
+  #   container_name: scheduler
+  #   restart: unless-stopped
+  #   profiles:
+  #     - laravel
+  #   working_dir: /var/www/${PROJECT_NAME:-myapp}
+  #   volumes:
+  #     - ${PROJECTS_PATH:-../projects}:/var/www:cached
+  #   networks:
+  #     - laravel-dev
+  #   depends_on:
+  #     - postgres
+  #     - redis
+  #   command: sh -c "while true; do php artisan schedule:run --verbose --no-interaction; sleep 60; done"
+
+  # ============================================================================
+  # CUSTOM PHP WITH AI/ML TOOLS (Whisper, etc.)
+  # ============================================================================
+  # Extended PHP container with Python and AI transcription tools
+  # Use this if your project needs Whisper or similar heavy dependencies
+  #
+  # php-ai:
+  #   build:
+  #     context: ./docker/php-ai
+  #     dockerfile: Dockerfile
+  #   container_name: php-ai
+  #   profiles:
+  #     - ai
+  #   working_dir: /var/www
+  #   volumes:
+  #     - ${PROJECTS_PATH:-../projects}:/var/www:cached
+  #   networks:
+  #     - laravel-dev
+  #   environment:
+  #     - WHISPER_MODEL=base
+  #     - WHISPER_LANGUAGE=en
+
+  # ============================================================================
+  # CUSTOM RTMP CALLBACKS
+  # ============================================================================
+  # Override RTMP configuration to add project-specific webhooks
+  # Requires profile 'streaming' to be enabled
+  #
+  # rtmp:
+  #   volumes:
+  #     - ./docker/rtmp/nginx-rtmp.conf:/etc/nginx/nginx.conf:ro
+  #     - ./storage/app/hls:/var/www/hls
+  #     - ./storage/app/recordings:/var/www/recordings
+
+  # ============================================================================
+  # ELASTICSEARCH
+  # ============================================================================
+  # Full-text search engine for Laravel Scout or custom search
+  #
+  # elasticsearch:
+  #   image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+  #   container_name: elasticsearch
+  #   restart: unless-stopped
+  #   environment:
+  #     - discovery.type=single-node
+  #     - xpack.security.enabled=false
+  #     - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+  #   ports:
+  #     - "9200:9200"
+  #   volumes:
+  #     - elasticsearch_data:/usr/share/elasticsearch/data
+  #   networks:
+  #     - laravel-dev
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -s http://localhost:9200/_cluster/health | grep -q 'green\\|yellow'"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+
+  # ============================================================================
+  # MEILISEARCH
+  # ============================================================================
+  # Fast, typo-tolerant search engine (alternative to Elasticsearch)
+  #
+  # meilisearch:
+  #   image: getmeili/meilisearch:latest
+  #   container_name: meilisearch
+  #   restart: unless-stopped
+  #   ports:
+  #     - "7700:7700"
+  #   environment:
+  #     - MEILI_ENV=development
+  #     - MEILI_NO_ANALYTICS=true
+  #   volumes:
+  #     - meilisearch_data:/meili_data
+  #   networks:
+  #     - laravel-dev
+  #   labels:
+  #     - "traefik.enable=true"
+  #     - "traefik.http.routers.meilisearch.rule=Host(`search.localhost`)"
+  #     - "traefik.http.routers.meilisearch.entrypoints=websecure"
+  #     - "traefik.http.routers.meilisearch.tls=true"
+  #     - "traefik.http.services.meilisearch.loadbalancer.server.port=7700"
+
+  # ============================================================================
+  # SOKETI - Open Source Pusher Alternative
+  # ============================================================================
+  # Self-hosted WebSocket server compatible with Pusher protocol
+  #
+  # soketi:
+  #   image: quay.io/soketi/soketi:latest-16-alpine
+  #   container_name: soketi
+  #   restart: unless-stopped
+  #   ports:
+  #     - "6001:6001"
+  #     - "9601:9601"
+  #   environment:
+  #     - SOKETI_DEBUG=1
+  #     - SOKETI_METRICS_SERVER_PORT=9601
+  #   networks:
+  #     - laravel-dev
+  #   labels:
+  #     - "traefik.enable=true"
+  #     - "traefik.http.routers.soketi.rule=Host(`pusher.localhost`)"
+  #     - "traefik.http.routers.soketi.entrypoints=websecure"
+  #     - "traefik.http.routers.soketi.tls=true"
+  #     - "traefik.http.services.soketi.loadbalancer.server.port=6001"
+
+# ============================================================================
+# ADDITIONAL VOLUMES
+# ============================================================================
+# volumes:
+#   elasticsearch_data:
+#     name: laravel-dev-elasticsearch
+#   meilisearch_data:
+#     name: laravel-dev-meilisearch
+
+# ============================================================================
+# NETWORK CONFIGURATION
+# ============================================================================
+# Uncomment to customize network settings
+# networks:
+#   laravel-dev:
+#     driver: bridge
+#     ipam:
+#       config:
+#         - subnet: 172.20.0.0/16

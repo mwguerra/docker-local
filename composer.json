@@ -1,0 +1,77 @@
+{
+    "name": "mwguerra/docker-local",
+    "description": "Complete Docker development environment for Laravel - PHP 8.4, MySQL 9.1, PostgreSQL 17, Redis 8, Traefik 3.6",
+    "type": "library",
+    "license": "MIT",
+    "version": "2.0.0",
+    "authors": [
+        {
+            "name": "MWGuerra",
+            "email": "dev@mwguerra.com"
+        }
+    ],
+    "keywords": [
+        "laravel",
+        "docker",
+        "development",
+        "environment",
+        "php",
+        "mysql",
+        "postgresql",
+        "redis",
+        "traefik",
+        "minio",
+        "xdebug"
+    ],
+    "homepage": "https://github.com/mwguerra/docker-local",
+    "support": {
+        "issues": "https://github.com/mwguerra/docker-local/issues",
+        "source": "https://github.com/mwguerra/docker-local"
+    },
+    "require": {
+        "php": "^8.2"
+    },
+    "require-dev": {
+        "pestphp/pest": "^3.0 || ^4.0",
+        "mockery/mockery": "^1.6"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        },
+        "platform": {
+            "php": "8.4.0"
+        }
+    },
+    "autoload": {
+        "psr-4": {
+            "MWGuerra\\DockerLocal\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    },
+    "bin": [
+        "bin/docker-local"
+    ],
+    "scripts": {
+        "test": "pest",
+        "test:coverage": "pest --coverage",
+        "test:parallel": "pest --parallel"
+    },
+    "scripts-descriptions": {
+        "test": "Run the test suite with Pest",
+        "test:coverage": "Run tests with code coverage",
+        "test:parallel": "Run tests in parallel"
+    },
+    "extra": {
+        "laravel": {
+            "dont-discover": []
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}

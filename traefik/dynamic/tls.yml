@@ -1,0 +1,27 @@
+# ==============================================================================
+# Configuração de Certificados TLS para desenvolvimento local
+# ==============================================================================
+
+tls:
+  certificates:
+    # Certificado wildcard para *.localhost
+    - certFile: /etc/certs/localhost.crt
+      keyFile: /etc/certs/localhost.key
+    
+    # Certificado wildcard para *.test
+    - certFile: /etc/certs/test.crt
+      keyFile: /etc/certs/test.key
+
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/certs/localhost.crt
+        keyFile: /etc/certs/localhost.key
+
+  options:
+    default:
+      minVersion: VersionTLS12
+      cipherSuites:
+        - TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384
+        - TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305
+        - TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256

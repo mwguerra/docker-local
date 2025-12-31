@@ -1,0 +1,15 @@
+# Ambiente
+.env
+
+# Certificados SSL (sensível)
+certs/*.crt
+certs/*.key
+
+# Projetos (cada um tem seu próprio git)
+projects/
+
+# Logs
+*.log
+
+# Docker
+docker-compose.override.yml
