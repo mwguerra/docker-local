@@ -42,13 +42,13 @@ mkdir -p "$CERTS_DIR"
 echo -e "${BLUE}→ Generating certificate for *.localhost${NC}"
 mkcert -cert-file "$CERTS_DIR/localhost.crt" \
        -key-file "$CERTS_DIR/localhost.key" \
-       "localhost" "*.localhost" "*.*.localhost"
+       "localhost" "*.localhost"
 
 # Gerar certificado para *.test
 echo -e "${BLUE}→ Generating certificate for *.test${NC}"
 mkcert -cert-file "$CERTS_DIR/test.crt" \
        -key-file "$CERTS_DIR/test.key" \
-       "test" "*.test" "*.*.test"
+       "test" "*.test"
 
 print_success "Certificates generated in $CERTS_DIR"
 echo ""
