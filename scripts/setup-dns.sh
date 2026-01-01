@@ -5,7 +5,7 @@
 # ==============================================================================
 # Isso permite que qualquer subdomínio funcione automaticamente!
 #
-# Uso: sudo docker-local setup:dns
+# Uso: sudo "$(which docker-local)" setup:dns
 # ==============================================================================
 
 set -e
@@ -27,7 +27,7 @@ if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}Error: This command requires root privileges${NC}"
     echo ""
     echo -e "Please run with sudo:"
-    echo -e "  ${CYAN}sudo docker-local setup:dns${NC}"
+    echo -e "  ${CYAN}sudo \"\$(which docker-local)\" setup:dns${NC}"
     echo ""
     exit 1
 fi

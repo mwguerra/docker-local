@@ -155,12 +155,12 @@ docker-local logs mysql
 
 **Solution 1: Use dnsmasq (recommended)**
 ```bash
-sudo docker-local setup:dns
+sudo "$(which docker-local)" setup:dns
 ```
 
 **Solution 2: Manual /etc/hosts**
 ```bash
-sudo docker-local setup:hosts
+sudo "$(which docker-local)" setup:hosts
 
 # Add entries manually
 echo "127.0.0.1 myproject.test" | sudo tee -a /etc/hosts
@@ -250,7 +250,7 @@ When using local PHP (not Docker), services need to be accessible by hostname.
 
 **Run:**
 ```bash
-sudo docker-local setup:hosts
+sudo "$(which docker-local)" setup:hosts
 ```
 
 This adds to `/etc/hosts`:

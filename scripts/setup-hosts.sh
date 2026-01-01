@@ -6,7 +6,7 @@
 # Isso permite que o PHP local conecte aos serviços usando os mesmos hostnames
 # que os containers Docker usam (mysql, postgres, redis, etc.)
 #
-# Uso: sudo docker-local setup:hosts
+# Uso: sudo "$(which docker-local)" setup:hosts
 # ==============================================================================
 
 set -e
@@ -31,7 +31,7 @@ if [ "$EUID" -ne 0 ]; then
     echo -e "${RED}Error: This command requires root privileges${NC}"
     echo ""
     echo -e "Please run with sudo:"
-    echo -e "  ${CYAN}sudo docker-local setup:hosts${NC}"
+    echo -e "  ${CYAN}sudo \"\$(which docker-local)\" setup:hosts${NC}"
     echo ""
     exit 1
 fi

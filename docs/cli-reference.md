@@ -45,7 +45,7 @@ Validates:
 Add Docker hostnames to `/etc/hosts` for local PHP usage.
 
 ```bash
-sudo docker-local setup:hosts
+sudo "$(which docker-local)" setup:hosts
 ```
 
 Adds entries for: `mysql`, `postgres`, `redis`, `minio`, `mailpit`
@@ -55,7 +55,7 @@ Adds entries for: `mysql`, `postgres`, `redis`, `minio`, `mailpit`
 Configure dnsmasq for `*.test` domain resolution.
 
 ```bash
-sudo docker-local setup:dns
+sudo "$(which docker-local)" setup:dns
 ```
 
 Enables wildcard DNS for all `.test` domains.

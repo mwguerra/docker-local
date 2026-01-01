@@ -124,11 +124,11 @@ For automatic `.test` domain resolution (so `https://my-app.test` works):
 ```bash
 # Option A: Automatic DNS (recommended)
 # Sets up dnsmasq to resolve all *.test domains
-sudo docker-local setup:dns
+sudo "$(which docker-local)" setup:dns
 
 # Option B: Manual /etc/hosts entries
 # Adds specific hostnames to /etc/hosts
-sudo docker-local setup:hosts
+sudo "$(which docker-local)" setup:hosts
 ```
 
 ---
@@ -274,7 +274,7 @@ sudo apt install php8.4 php8.4-{mysql,redis,mbstring,xml,curl,zip,gd,intl}
 ### Configure Hostnames
 
 ```bash
-sudo docker-local setup:hosts
+sudo "$(which docker-local)" setup:hosts
 ```
 
 This adds to `/etc/hosts`:

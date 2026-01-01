@@ -551,8 +551,8 @@ eval "$(docker-local completion zsh)"   # ~/.zshrc
 ```bash
 # Setup inicial
 docker-local init
-sudo docker-local setup:hosts
-sudo docker-local setup:dns
+sudo "$(which docker-local)" setup:hosts
+sudo "$(which docker-local)" setup:dns
 
 # Criar projeto
 docker-local make:laravel blog
@@ -1319,7 +1319,7 @@ pecl install redis
 
 **Configurar hostnames:**
 ```bash
-sudo docker-local setup:hosts
+sudo "$(which docker-local)" setup:hosts
 ```
 
 Isso adiciona ao `/etc/hosts`:
@@ -1854,10 +1854,10 @@ cd docker-environment
 docker-local init
 
 # 4. Configurar para PHP local (requer sudo)
-sudo docker-local setup:hosts
+sudo "$(which docker-local)" setup:hosts
 
 # 5. Configurar DNS wildcard (requer sudo)
-sudo docker-local setup:dns
+sudo "$(which docker-local)" setup:dns
 
 # 6. Verificar instalação
 docker-local config
@@ -1888,11 +1888,11 @@ Alguns comandos modificam arquivos do sistema e precisam de sudo:
 ```bash
 # Adiciona hostnames ao /etc/hosts
 # Permite que PHP local conecte aos serviços Docker
-sudo docker-local setup:hosts
+sudo "$(which docker-local)" setup:hosts
 
 # Instala e configura dnsmasq
 # Permite usar domínios *.test e *.localhost
-sudo docker-local setup:dns
+sudo "$(which docker-local)" setup:dns
 ```
 
 **Nota:** Esses comandos verificam se você está rodando como root e dão uma mensagem clara se não estiver:
@@ -1901,7 +1901,7 @@ sudo docker-local setup:dns
 Error: This command requires root privileges
 
 Please run with sudo:
-  sudo docker-local setup:hosts
+  sudo "$(which docker-local)" setup:hosts
 ```
 
 ### 15.4 Verificações de Idempotência

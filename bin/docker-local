@@ -75,7 +75,7 @@ show_help() {
     echo -e "${WHITE}Usage:${NC} docker-local <command> [options]"
     echo ""
     echo -e "${WHITE}Setup Commands:${NC}"
-    echo -e "  ${GREEN}init${NC}                  Complete initial setup (first run)"
+    echo -e "  ${GREEN}init${NC} [--force]        Complete initial setup (first run)"
     echo -e "  ${GREEN}doctor${NC}                Full system health check"
     echo -e "  ${GREEN}setup:hosts${NC}           Add Docker hostnames to /etc/hosts ${DIM}(sudo)${NC}"
     echo -e "  ${GREEN}setup:dns${NC}             Configure dnsmasq for *.test ${DIM}(sudo)${NC}"
@@ -186,10 +186,143 @@ check_sudo() {
         echo -e "${RED}Error: This command requires root privileges${NC}"
         echo ""
         echo -e "Please run with sudo:"
-        echo -e "  ${CYAN}sudo docker-local $1${NC}"
+        echo -e "  ${CYAN}sudo \"\$(which docker-local)\" $1${NC}"
         echo ""
         exit 1
     fi
+}
+
+# Check if a port is in use by a non-Docker process
+check_port_in_use() {
+    local port=$1
+    local service_name=$2
+
+    # Check if port is in use
+    if ss -tlnp 2>/dev/null | grep -q ":${port} "; then
+        # Check if it's used by Docker
+        local docker_using=$(docker ps --format '{{.Ports}}' 2>/dev/null | grep -c ":${port}->" || true)
+        if [ "$docker_using" -eq 0 ]; then
+            echo "$service_name"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+# Check if container with name exists (running or stopped)
+check_container_exists() {
+    local container_name=$1
+    if docker ps -a --format '{{.Names}}' 2>/dev/null | grep -q "^${container_name}$"; then
+        return 0
+    fi
+    return 1
+}
+
+# Check for environment conflicts before starting containers
+check_init_conflicts() {
+    local has_port_conflicts=false
+    local has_container_conflicts=false
+    local port_conflicts=()
+    local container_conflicts=()
+
+    # Define ports to check (service:port:name)
+    local services=(
+        "traefik:80:Traefik (HTTP)"
+        "traefik:443:Traefik (HTTPS)"
+        "mysql:3306:MySQL"
+        "postgres:5432:PostgreSQL"
+        "redis:6379:Redis"
+        "minio:9000:MinIO API"
+        "minio:9001:MinIO Console"
+        "mailpit:1025:Mailpit SMTP"
+        "mailpit:8025:Mailpit Web"
+    )
+
+    echo -e "${BLUE}[Pre-flight] Checking for conflicts...${NC}"
+
+    # Check port conflicts
+    for service in "${services[@]}"; do
+        IFS=':' read -r svc port name <<< "$service"
+        if conflict=$(check_port_in_use "$port" "$name"); then
+            has_port_conflicts=true
+            port_conflicts+=("$port:$name")
+        fi
+    done
+
+    # Check container name conflicts (non-docker-local containers)
+    local containers=("traefik" "mysql" "postgres" "redis" "minio" "minio-setup" "mailpit" "nginx" "php")
+    for container in "${containers[@]}"; do
+        if check_container_exists "$container"; then
+            # Check if it's from a different compose project
+            local project=$(docker inspect "$container" --format '{{index .Config.Labels "com.docker.compose.project"}}' 2>/dev/null || echo "")
+            if [ "$project" != "docker" ] && [ "$project" != "" ]; then
+                has_container_conflicts=true
+                container_conflicts+=("$container")
+            fi
+        fi
+    done
+
+    # Report port conflicts
+    if [ "$has_port_conflicts" = true ]; then
+        echo ""
+        echo -e "${RED}  ✗ Port conflicts detected:${NC}"
+        for conflict in "${port_conflicts[@]}"; do
+            IFS=':' read -r port name <<< "$conflict"
+            echo -e "    ${YELLOW}•${NC} Port ${CYAN}$port${NC} ($name) is in use by another process"
+        done
+        echo ""
+        echo -e "${WHITE}  To fix, stop the conflicting services:${NC}"
+        echo -e "    ${DIM}# Example for common services:${NC}"
+        echo -e "    ${CYAN}sudo systemctl stop nginx${NC}     ${DIM}# for port 80/443${NC}"
+        echo -e "    ${CYAN}sudo systemctl stop mysql${NC}     ${DIM}# for port 3306${NC}"
+        echo -e "    ${CYAN}sudo systemctl stop postgresql${NC} ${DIM}# for port 5432${NC}"
+        echo -e "    ${CYAN}sudo systemctl stop redis${NC}     ${DIM}# for port 6379${NC}"
+        echo ""
+        echo -e "  ${DIM}Or check what's using the port: ${CYAN}ss -tlnp | grep :PORT${NC}${NC}"
+        echo ""
+        return 1
+    fi
+
+    # Report and handle container conflicts
+    if [ "$has_container_conflicts" = true ]; then
+        echo ""
+        echo -e "${YELLOW}  ⚠ Existing containers detected:${NC}"
+        for container in "${container_conflicts[@]}"; do
+            local status=$(docker inspect "$container" --format '{{.State.Status}}' 2>/dev/null || echo "unknown")
+            echo -e "    ${YELLOW}•${NC} ${CYAN}$container${NC} (status: $status)"
+        done
+        echo ""
+        echo -e "${WHITE}  These containers may conflict with docker-local.${NC}"
+        echo -e "${WHITE}  Would you like to remove them? [y/N]${NC} "
+        read -r response
+        if [[ "$response" =~ ^[Yy]$ ]]; then
+            echo -e "${YELLOW}  → Removing conflicting containers...${NC}"
+            for container in "${container_conflicts[@]}"; do
+                docker stop "$container" 2>/dev/null || true
+                docker rm "$container" 2>/dev/null || true
+                echo -e "    ${GREEN}✓${NC} Removed $container"
+            done
+            echo ""
+        else
+            echo -e "${YELLOW}  Skipping container cleanup. You may encounter errors.${NC}"
+            echo ""
+        fi
+    fi
+
+    echo -e "${GREEN}  ✓ No port conflicts detected${NC}"
+    echo ""
+    return 0
+}
+
+# Cleanup existing docker-local containers and volumes
+cleanup_docker_local() {
+    echo -e "${YELLOW}  → Stopping existing containers...${NC}"
+    docker_compose down --remove-orphans 2>/dev/null || true
+
+    echo -e "${YELLOW}  → Removing volumes (this will delete data)...${NC}"
+    docker volume rm laravel-dev-mysql laravel-dev-postgres laravel-dev-redis laravel-dev-minio 2>/dev/null || true
+
+    echo -e "${GREEN}  ✓ Cleanup complete${NC}"
 }
 
 get_current_project() {
@@ -1101,7 +1234,7 @@ cmd_doctor() {
         echo -e "  ${GREEN}✓${NC} /etc/hosts configured"
     else
         echo -e "  ${YELLOW}⚠${NC} /etc/hosts not configured"
-        echo -e "      ${DIM}Run: sudo docker-local setup:hosts${NC}"
+        echo -e "      ${DIM}Run: sudo \"\$(which docker-local)\" setup:hosts${NC}"
         ((warnings++))
     fi
     
@@ -1116,7 +1249,7 @@ cmd_doctor() {
         fi
     else
         echo -e "  ${YELLOW}⚠${NC} dnsmasq not configured"
-        echo -e "      ${DIM}Run: sudo docker-local setup:dns${NC}"
+        echo -e "      ${DIM}Run: sudo \"\$(which docker-local)\" setup:dns${NC}"
         ((warnings++))
     fi
     echo ""
@@ -1341,15 +1474,30 @@ EOF
 # ==============================================================================
 
 cmd_init() {
+    local force_rebuild=false
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --force|-f)
+                force_rebuild=true
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
     show_logo
-    
+
     echo -e "${WHITE}Starting complete environment setup...${NC}"
     echo ""
-    
+
     check_docker_env
-    
-    # Passo 1: Verificar Docker
-    echo -e "${BLUE}[1/6] Checking Docker...${NC}"
+
+    # Step 1: Check Docker
+    echo -e "${BLUE}[1/7] Checking Docker...${NC}"
     if ! docker info > /dev/null 2>&1; then
         echo -e "${RED}  ✗ Docker is not running${NC}"
         echo -e "  Please start Docker and run ${CYAN}docker-local init${NC} again"
@@ -1357,9 +1505,28 @@ cmd_init() {
     fi
     echo -e "${GREEN}  ✓ Docker is running${NC}"
     echo ""
-    
-    # Step 2: Create config directory and copy .env
-    echo -e "${BLUE}[2/6] Checking configuration...${NC}"
+
+    # Step 2: Check for conflicts BEFORE doing anything else
+    echo -e "${BLUE}[2/7] Checking for conflicts...${NC}"
+
+    # If force rebuild, cleanup first
+    if [ "$force_rebuild" = true ]; then
+        echo -e "${YELLOW}  → Force rebuild requested, cleaning up...${NC}"
+        cleanup_docker_local
+        echo ""
+    fi
+
+    # Check for port and container conflicts
+    if ! check_init_conflicts; then
+        echo -e "${RED}  ✗ Cannot continue due to port conflicts${NC}"
+        echo -e "  Please resolve the conflicts above and run ${CYAN}docker-local init${NC} again"
+        echo ""
+        echo -e "  ${DIM}Tip: Use ${CYAN}docker-local init --force${NC} to clean up and rebuild${NC}"
+        exit 1
+    fi
+
+    # Step 3: Create config directory and copy .env
+    echo -e "${BLUE}[3/7] Checking configuration...${NC}"
     mkdir -p "$CONFIG_DIR"
     if [ ! -f "$CONFIG_DIR/.env" ]; then
         if [ -f "$PACKAGE_DIR/stubs/.env.stub" ]; then
@@ -1395,8 +1562,8 @@ cmd_init() {
     fi
     echo ""
 
-    # Step 3: Generate SSL certificates
-    echo -e "${BLUE}[3/6] Checking SSL certificates...${NC}"
+    # Step 4: Generate SSL certificates
+    echo -e "${BLUE}[4/7] Checking SSL certificates...${NC}"
     if [ -f "$CONFIG_DIR/certs/test.crt" ] && [ -f "$CONFIG_DIR/certs/localhost.crt" ]; then
         echo -e "${GREEN}  ✓ SSL certificates already exist${NC}"
     else
@@ -1407,9 +1574,9 @@ cmd_init() {
         echo -e "${GREEN}  ✓ SSL certificates generated${NC}"
     fi
     echo ""
-    
-    # Passo 4: Criar diretório de projetos
-    echo -e "${BLUE}[4/6] Checking projects directory...${NC}"
+
+    # Step 5: Create projects directory
+    echo -e "${BLUE}[5/7] Checking projects directory...${NC}"
     if [ ! -d "$PROJECTS_DIR" ]; then
         mkdir -p "$PROJECTS_DIR"
         echo -e "${GREEN}  ✓ Created $PROJECTS_DIR${NC}"
@@ -1417,61 +1584,105 @@ cmd_init() {
         echo -e "${GREEN}  ✓ Projects directory exists${NC}"
     fi
     echo ""
-    
-    # Passo 5: Build e start dos containers
-    echo -e "${BLUE}[5/6] Starting Docker containers...${NC}"
 
-    if ! docker images | grep -q "docker-local-php\|mwguerra.*php"; then
+    # Step 6: Build and start containers
+    echo -e "${BLUE}[6/7] Starting Docker containers...${NC}"
+
+    if [ "$force_rebuild" = true ] || ! docker images | grep -q "docker-php"; then
         echo -e "${YELLOW}  → Building Docker images (this may take a few minutes)...${NC}"
-        docker_compose build
+        docker_compose build --no-cache
     fi
 
-    docker_compose up -d
+    # Start containers and capture output for error handling
+    echo -e "${YELLOW}  → Starting containers...${NC}"
+    local compose_output
+    if ! compose_output=$(docker_compose up -d 2>&1); then
+        echo -e "${RED}  ✗ Failed to start containers${NC}"
+        echo ""
+
+        # Parse common errors and provide helpful messages
+        if echo "$compose_output" | grep -q "address already in use"; then
+            local port=$(echo "$compose_output" | grep -oP 'port \K[0-9]+' | head -1)
+            echo -e "${YELLOW}  Port conflict detected on port $port${NC}"
+            echo ""
+            echo -e "  Check what's using the port:"
+            echo -e "    ${CYAN}ss -tlnp | grep :$port${NC}"
+            echo ""
+            echo -e "  Common fixes:"
+            echo -e "    ${CYAN}sudo systemctl stop nginx mysql postgresql redis${NC}"
+        elif echo "$compose_output" | grep -q "container name.*already in use"; then
+            local container=$(echo "$compose_output" | grep -oP 'name "/\K[^"]+' | head -1)
+            echo -e "${YELLOW}  Container name conflict: $container${NC}"
+            echo ""
+            echo -e "  Remove the conflicting container:"
+            echo -e "    ${CYAN}docker rm -f $container${NC}"
+        else
+            echo -e "  ${DIM}$compose_output${NC}"
+        fi
+        echo ""
+        echo -e "  ${DIM}Tip: Use ${CYAN}docker-local init --force${NC} to clean up and rebuild${NC}"
+        exit 1
+    fi
     echo -e "${GREEN}  ✓ Containers started${NC}"
     echo ""
-    
-    # Passo 6: Verificar status
-    echo -e "${BLUE}[6/6] Checking services...${NC}"
-    sleep 3
-    
-    for service in mysql postgres redis minio mailpit; do
-        if docker ps --format '{{.Names}}' | grep -q "^$service$"; then
-            echo -e "  ${GREEN}✓${NC} $service"
+
+    # Step 7: Check service status
+    echo -e "${BLUE}[7/7] Checking services...${NC}"
+    sleep 5  # Give containers more time to become healthy
+
+    local all_healthy=true
+    for service in mysql postgres redis minio mailpit traefik; do
+        local status=$(docker inspect "$service" --format '{{.State.Health.Status}}' 2>/dev/null || echo "unknown")
+        local running=$(docker inspect "$service" --format '{{.State.Running}}' 2>/dev/null || echo "false")
+
+        if [ "$running" = "true" ]; then
+            if [ "$status" = "healthy" ] || [ "$status" = "unknown" ]; then
+                echo -e "  ${GREEN}✓${NC} $service"
+            else
+                echo -e "  ${YELLOW}⏳${NC} $service (starting...)"
+            fi
         else
             echo -e "  ${RED}✗${NC} $service"
+            all_healthy=false
         fi
     done
     echo ""
-    
-    # Resumo
+
+    if [ "$all_healthy" = false ]; then
+        echo -e "${YELLOW}Some services failed to start. Check logs with:${NC}"
+        echo -e "  ${CYAN}docker-local logs [service]${NC}"
+        echo ""
+    fi
+
+    # Summary
     echo -e "${GREEN}╔═══════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║               Basic Setup Complete! 🎉                        ║${NC}"
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
-    
+
     local needs_hosts=false
     local needs_dns=false
-    
+
     if ! grep -q "127.0.0.1.*mysql.*postgres.*redis" /etc/hosts 2>/dev/null; then
         needs_hosts=true
     fi
-    
+
     if [ ! -f /etc/dnsmasq.d/laravel-dev.conf ] 2>/dev/null; then
         needs_dns=true
     fi
-    
+
     if [ "$needs_hosts" = true ] || [ "$needs_dns" = true ]; then
         echo -e "${YELLOW}To complete setup, run these commands with sudo:${NC}"
         echo ""
-        
+
         if [ "$needs_hosts" = true ]; then
-            echo -e "  ${CYAN}sudo docker-local setup:hosts${NC}"
+            echo -e "  ${CYAN}sudo \"\$(which docker-local)\" setup:hosts${NC}"
             echo -e "  ${DIM}  └─ Enables local PHP to connect to Docker services${NC}"
             echo ""
         fi
-        
+
         if [ "$needs_dns" = true ]; then
-            echo -e "  ${CYAN}sudo docker-local setup:dns${NC}"
+            echo -e "  ${CYAN}sudo \"\$(which docker-local)\" setup:dns${NC}"
             echo -e "  ${DIM}  └─ Enables *.test domain resolution${NC}"
             echo ""
         fi
@@ -1479,7 +1690,7 @@ cmd_init() {
         echo -e "${GREEN}✓ All configurations are complete!${NC}"
         echo ""
     fi
-    
+
     echo -e "${WHITE}Next steps:${NC}"
     echo ""
     echo -e "  ${CYAN}docker-local make:laravel myapp${NC}    # Create a new project"
@@ -1853,7 +2064,7 @@ cmd_env_check() {
     if [ "$hosts_ok" = false ]; then
         echo ""
         echo -e "  ${YELLOW}Why:${NC} Local PHP needs these hostnames to connect to Docker services."
-        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}sudo docker-local setup:hosts${NC}"
+        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}sudo \"\$(which docker-local)\" setup:hosts${NC}"
         ((warnings++))
     fi
     echo ""
@@ -1999,7 +2210,7 @@ cmd_env_check() {
         echo -e "  ${YELLOW}⚠${NC} DNS not resolving: $domain"
         echo ""
         echo -e "  ${YELLOW}Why:${NC} Your browser won't be able to access https://$domain"
-        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}sudo docker-local setup:dns${NC}"
+        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}sudo \"\$(which docker-local)\" setup:dns${NC}"
         ((warnings++))
     fi
     echo ""
@@ -2023,7 +2234,7 @@ cmd_env_check() {
         echo -e "${WHITE}Quick fixes:${NC}"
         echo -e "  • Update .env with unique values: ${CYAN}docker-local update:env${NC}"
         echo -e "  • Start Docker services: ${CYAN}docker-local up${NC}"
-        echo -e "  • Configure system hosts: ${CYAN}sudo docker-local setup:hosts${NC}"
+        echo -e "  • Configure system hosts: ${CYAN}sudo \"\$(which docker-local)\" setup:hosts${NC}"
     fi
     echo ""
 }
@@ -2418,7 +2629,7 @@ cmd_env_check() {
             hosts_ok=false
         fi
     done
-    [ "$hosts_ok" = false ] && echo -e "  ${YELLOW}Run: sudo docker-local setup:hosts${NC}" && ((warnings++))
+    [ "$hosts_ok" = false ] && echo -e "  ${YELLOW}Run: sudo \"\$(which docker-local)\" setup:hosts${NC}" && ((warnings++))
     echo ""
     
     # Database
@@ -2939,7 +3150,7 @@ cmd_startup_status() {
 
 case "$1" in
     # Setup
-    init) cmd_init ;;
+    init) shift; cmd_init "$@" ;;
     doctor) cmd_doctor ;;
     setup) cmd_setup ;;
     setup:dns) cmd_setup_dns ;;

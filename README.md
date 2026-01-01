@@ -125,7 +125,7 @@ source ~/.bashrc  # or source ~/.zshrc
 docker-local init
 
 # 6. (Optional) Configure DNS for *.test domains
-sudo docker-local setup:dns
+sudo "$(which docker-local)" setup:dns
 ```
 
 ### macOS
@@ -154,7 +154,7 @@ source ~/.zshrc
 docker-local init
 
 # 7. (Optional) Configure DNS for *.test domains
-sudo docker-local setup:dns
+sudo "$(which docker-local)" setup:dns
 ```
 
 ### Windows (WSL2)
@@ -199,7 +199,7 @@ source ~/.bashrc
 docker-local init
 
 # (Optional) Configure DNS
-sudo docker-local setup:dns
+sudo "$(which docker-local)" setup:dns
 ```
 
 #### Accessing Projects from Windows
@@ -1266,7 +1266,7 @@ If you prefer using your local PHP installation with Docker services:
 
 ```bash
 # 1. Configure hostnames
-sudo docker-local setup:hosts
+sudo "$(which docker-local)" setup:hosts
 
 # 2. Now use standard PHP commands
 cd ~/projects/my-app
