@@ -54,7 +54,9 @@ RUN apk add --no-cache \
     libmemcached-dev \
     zlib-dev \
     # AMQP (RabbitMQ)
-    rabbitmq-c-dev
+    rabbitmq-c-dev \
+    # Gettext (internationalization)
+    gettext-dev
 
 # Configurar e instalar extensões GD com todos os formatos de imagem
 RUN docker-php-ext-configure gd \
