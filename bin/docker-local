@@ -76,6 +76,7 @@ show_help() {
     echo ""
     echo -e "${WHITE}Setup Commands:${NC}"
     echo -e "  ${GREEN}init${NC} [--force]        Complete initial setup (first run)"
+    echo -e "  ${GREEN}setup${NC} [setting]       Configure settings (paths, ports, editor)"
     echo -e "  ${GREEN}doctor${NC}                Full system health check"
     echo -e "  ${GREEN}setup:hosts${NC}           Add Docker hostnames to /etc/hosts ${DIM}(sudo)${NC}"
     echo -e "  ${GREEN}setup:dns${NC}             Configure dnsmasq for *.test ${DIM}(sudo)${NC}"
@@ -2757,11 +2758,302 @@ cmd_shell() {
     fi
 }
 
+# ==============================================================================
+# Setup Command - Interactive Settings Configuration
+# ==============================================================================
+
 cmd_setup() {
     check_docker_env
-    if [ -f "$PACKAGE_DIR/scripts/setup.sh" ]; then
-        bash "$PACKAGE_DIR/scripts/setup.sh"
+
+    # Parse arguments for direct CLI mode
+    local setting=""
+    local value=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --projects-path=*)
+                setting="projects_path"
+                value="${1#*=}"
+                shift
+                ;;
+            --php-version=*)
+                setting="default_php_version"
+                value="${1#*=}"
+                shift
+                ;;
+            --mysql-port=*)
+                setting="mysql.port"
+                value="${1#*=}"
+                shift
+                ;;
+            --postgres-port=*)
+                setting="postgres.port"
+                value="${1#*=}"
+                shift
+                ;;
+            --editor=*)
+                setting="editor"
+                value="${1#*=}"
+                shift
+                ;;
+            projects-path|projects)
+                cmd_setup_projects_path
+                return
+                ;;
+            php-version|php)
+                cmd_setup_php_version
+                return
+                ;;
+            mysql-port)
+                cmd_setup_mysql_port
+                return
+                ;;
+            postgres-port)
+                cmd_setup_postgres_port
+                return
+                ;;
+            editor)
+                cmd_setup_editor
+                return
+                ;;
+            --help|-h)
+                cmd_setup_help
+                return
+                ;;
+            *)
+                echo -e "${RED}Unknown option: $1${NC}"
+                cmd_setup_help
+                exit 1
+                ;;
+        esac
+    done
+
+    # If direct value provided, update and exit
+    if [ -n "$setting" ] && [ -n "$value" ]; then
+        cmd_setup_update_config "$setting" "$value"
+        return
     fi
+
+    # No arguments - show interactive menu
+    cmd_setup_menu
+}
+
+cmd_setup_help() {
+    echo -e "${WHITE}Usage:${NC} docker-local setup [OPTION]"
+    echo ""
+    echo -e "${WHITE}Interactive mode:${NC}"
+    echo "  docker-local setup                    Show interactive settings menu"
+    echo "  docker-local setup projects-path      Change projects folder path"
+    echo "  docker-local setup php-version        Change default PHP version"
+    echo "  docker-local setup mysql-port         Change MySQL port"
+    echo "  docker-local setup postgres-port      Change PostgreSQL port"
+    echo "  docker-local setup editor             Change default editor"
+    echo ""
+    echo -e "${WHITE}Direct mode (non-interactive):${NC}"
+    echo "  docker-local setup --projects-path=/path/to/projects"
+    echo "  docker-local setup --php-version=8.3"
+    echo "  docker-local setup --mysql-port=3307"
+    echo "  docker-local setup --postgres-port=5433"
+    echo "  docker-local setup --editor=vim"
+}
+
+cmd_setup_menu() {
+    local projects_path=$(get_projects_dir)
+    local php_version=$(get_nested_config "default_php_version" "8.4")
+    local mysql_port=$(get_nested_config "mysql.port" "3306")
+    local postgres_port=$(get_nested_config "postgres.port" "5432")
+    local editor=$(get_nested_config "editor" "code")
+
+    echo ""
+    echo -e "${WHITE}docker-local Setup${NC}"
+    echo "=================="
+    echo ""
+    echo -e "${DIM}Paths:${NC}"
+    echo -e "  1) Projects path          ${CYAN}$projects_path${NC}"
+    echo ""
+    echo -e "${DIM}PHP:${NC}"
+    echo -e "  2) Default PHP version    ${CYAN}$php_version${NC}"
+    echo ""
+    echo -e "${DIM}Database Ports:${NC}"
+    echo -e "  3) MySQL port             ${CYAN}$mysql_port${NC}"
+    echo -e "  4) PostgreSQL port        ${CYAN}$postgres_port${NC}"
+    echo ""
+    echo -e "${DIM}Tools:${NC}"
+    echo -e "  5) Default editor         ${CYAN}$editor${NC}"
+    echo ""
+    echo -e "  q) Quit"
+    echo ""
+    read -p "Select option: " choice
+
+    case "$choice" in
+        1) cmd_setup_projects_path ;;
+        2) cmd_setup_php_version ;;
+        3) cmd_setup_mysql_port ;;
+        4) cmd_setup_postgres_port ;;
+        5) cmd_setup_editor ;;
+        q|Q) return 0 ;;
+        *)
+            echo -e "${RED}Invalid option${NC}"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_setup_update_config() {
+    local key="$1"
+    local value="$2"
+
+    local result=$(php "$PACKAGE_DIR/src/cli-helper.php" set "$key" "$value" 2>&1)
+
+    if [ "$result" = "OK" ]; then
+        echo -e "${GREEN}✓ Updated $key to: $value${NC}"
+
+        # Show restart warning for settings that require it
+        case "$key" in
+            mysql.port|postgres.port|projects_path)
+                echo -e "${YELLOW}Note: Restart docker-local services for changes to take effect.${NC}"
+                echo -e "  Run: ${CYAN}docker-local restart${NC}"
+                ;;
+        esac
+    else
+        echo -e "${RED}Failed to update config: $result${NC}"
+        exit 1
+    fi
+}
+
+cmd_setup_projects_path() {
+    local current_path=$(get_projects_dir)
+
+    echo ""
+    echo -e "${WHITE}Change Projects Path${NC}"
+    echo -e "Current: ${CYAN}$current_path${NC}"
+    echo ""
+    read -p "Enter new projects path (or press Enter to keep current): " new_path
+
+    if [ -z "$new_path" ]; then
+        echo -e "${YELLOW}No changes made.${NC}"
+        return 0
+    fi
+
+    # Expand ~ to home directory
+    new_path="${new_path/#\~/$HOME}"
+
+    # Validate path exists or offer to create
+    if [ ! -d "$new_path" ]; then
+        read -p "Directory does not exist. Create it? [y/N] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            mkdir -p "$new_path" || {
+                echo -e "${RED}Failed to create directory${NC}"
+                exit 1
+            }
+            echo -e "${GREEN}✓ Created directory: $new_path${NC}"
+        else
+            echo -e "${YELLOW}Cancelled.${NC}"
+            return 1
+        fi
+    fi
+
+    # Store as ~ path if it's in home directory for portability
+    local store_path="$new_path"
+    if [[ "$new_path" == "$HOME"* ]]; then
+        store_path="~${new_path#$HOME}"
+    fi
+
+    cmd_setup_update_config "projects_path" "$store_path"
+}
+
+cmd_setup_php_version() {
+    local current_version=$(get_nested_config "default_php_version" "8.4")
+
+    echo ""
+    echo -e "${WHITE}Change Default PHP Version${NC}"
+    echo -e "Current: ${CYAN}$current_version${NC}"
+    echo ""
+    echo "Available versions: 8.1, 8.2, 8.3, 8.4"
+    echo ""
+    read -p "Enter PHP version (or press Enter to keep current): " new_version
+
+    if [ -z "$new_version" ]; then
+        echo -e "${YELLOW}No changes made.${NC}"
+        return 0
+    fi
+
+    # Validate version
+    case "$new_version" in
+        8.1|8.2|8.3|8.4)
+            cmd_setup_update_config "default_php_version" "$new_version"
+            ;;
+        *)
+            echo -e "${RED}Invalid PHP version. Must be one of: 8.1, 8.2, 8.3, 8.4${NC}"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_setup_mysql_port() {
+    local current_port=$(get_nested_config "mysql.port" "3306")
+
+    echo ""
+    echo -e "${WHITE}Change MySQL Port${NC}"
+    echo -e "Current: ${CYAN}$current_port${NC}"
+    echo ""
+    read -p "Enter MySQL port (or press Enter to keep current): " new_port
+
+    if [ -z "$new_port" ]; then
+        echo -e "${YELLOW}No changes made.${NC}"
+        return 0
+    fi
+
+    # Validate port
+    if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
+        echo -e "${RED}Invalid port number. Must be between 1 and 65535.${NC}"
+        exit 1
+    fi
+
+    cmd_setup_update_config "mysql.port" "$new_port"
+}
+
+cmd_setup_postgres_port() {
+    local current_port=$(get_nested_config "postgres.port" "5432")
+
+    echo ""
+    echo -e "${WHITE}Change PostgreSQL Port${NC}"
+    echo -e "Current: ${CYAN}$current_port${NC}"
+    echo ""
+    read -p "Enter PostgreSQL port (or press Enter to keep current): " new_port
+
+    if [ -z "$new_port" ]; then
+        echo -e "${YELLOW}No changes made.${NC}"
+        return 0
+    fi
+
+    # Validate port
+    if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
+        echo -e "${RED}Invalid port number. Must be between 1 and 65535.${NC}"
+        exit 1
+    fi
+
+    cmd_setup_update_config "postgres.port" "$new_port"
+}
+
+cmd_setup_editor() {
+    local current_editor=$(get_nested_config "editor" "code")
+
+    echo ""
+    echo -e "${WHITE}Change Default Editor${NC}"
+    echo -e "Current: ${CYAN}$current_editor${NC}"
+    echo ""
+    echo "Common options: code, vim, nvim, nano, subl, atom"
+    echo ""
+    read -p "Enter editor command (or press Enter to keep current): " new_editor
+
+    if [ -z "$new_editor" ]; then
+        echo -e "${YELLOW}No changes made.${NC}"
+        return 0
+    fi
+
+    cmd_setup_update_config "editor" "$new_editor"
 }
 
 cmd_setup_dns() {
@@ -3152,7 +3444,7 @@ case "$1" in
     # Setup
     init) shift; cmd_init "$@" ;;
     doctor) cmd_doctor ;;
-    setup) cmd_setup ;;
+    setup) shift; cmd_setup "$@" ;;
     setup:dns) cmd_setup_dns ;;
     setup:hosts) cmd_setup_hosts ;;
     

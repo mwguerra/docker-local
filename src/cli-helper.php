@@ -6,10 +6,11 @@
  * This script outputs configuration values that can be sourced by bash.
  *
  * Usage:
- *   php cli-helper.php config          # Output all config as bash variables
- *   php cli-helper.php get <key>       # Get a specific config value
- *   php cli-helper.php resolve <path>  # Resolve a docker file path
- *   php cli-helper.php paths           # Output all paths
+ *   php cli-helper.php config              # Output all config as bash variables
+ *   php cli-helper.php get <key>           # Get a specific config value
+ *   php cli-helper.php set <key> <value>   # Set a config value
+ *   php cli-helper.php resolve <path>      # Resolve a docker file path
+ *   php cli-helper.php paths               # Output all paths
  */
 
 declare(strict_types=1);
@@ -109,8 +110,36 @@ switch ($command) {
 
         exit($isValid ? 0 : 1);
 
+    case 'set':
+        if (! isset($argv[2]) || ! isset($argv[3])) {
+            fwrite(STDERR, "Usage: cli-helper.php set <key> <value>\n");
+            exit(1);
+        }
+
+        $config = $app->getConfig();
+
+        if (! $config->exists()) {
+            fwrite(STDERR, "Config file not found. Run 'docker-local init' first.\n");
+            exit(1);
+        }
+
+        $key = $argv[2];
+        $value = $argv[3];
+
+        // Convert numeric strings to integers for port values
+        if (is_numeric($value) && str_contains($key, 'port')) {
+            $value = (int) $value;
+        }
+
+        $config->load();
+        $config->set($key, $value);
+        $config->save();
+
+        echo "OK\n";
+        break;
+
     default:
         fwrite(STDERR, "Unknown command: {$command}\n");
-        fwrite(STDERR, "Available commands: config, get, resolve, paths, initialized, version, validate\n");
+        fwrite(STDERR, "Available commands: config, get, set, resolve, paths, initialized, version, validate\n");
         exit(1);
 }
