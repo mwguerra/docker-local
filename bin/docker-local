@@ -2670,20 +2670,65 @@ cmd_env_check() {
     local db_host=$(get_env_value "DB_HOST")
     local db_port=$(get_env_value "DB_PORT")
     local db_database=$(get_env_value "DB_DATABASE")
-    
-    echo -e "  ${CYAN}Type:${NC} $db_connection | ${CYAN}Host:${NC} $db_host:$db_port | ${CYAN}DB:${NC} $db_database"
-    
-    local container_name="${db_connection:-mysql}"
-    [ "$db_connection" = "pgsql" ] && container_name="postgres"
-    
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^$container_name$"; then
-        echo -e "  ${GREEN}✓${NC} Container '$container_name' is running"
+
+    # Handle SQLite separately - it's file-based, not a container
+    if [ "$db_connection" = "sqlite" ]; then
+        echo -e "  ${CYAN}Type:${NC} sqlite (file-based)"
+
+        # Check if database file exists (Laravel uses database/database.sqlite by default)
+        local sqlite_path="${db_database:-database/database.sqlite}"
+        # If path is not absolute, make it relative to current directory
+        if [[ "$sqlite_path" != /* ]]; then
+            sqlite_path="$current_dir/$sqlite_path"
+        fi
+
+        if [ -f "$sqlite_path" ]; then
+            echo -e "  ${GREEN}✓${NC} Database file exists: ${DIM}$sqlite_path${NC}"
+        else
+            echo -e "  ${YELLOW}⚠${NC} Database file not found: ${DIM}$sqlite_path${NC}"
+            echo -e "    ${DIM}Run: touch $sqlite_path${NC}"
+            ((warnings++))
+        fi
     else
-        echo -e "  ${RED}✗${NC} Container '$container_name' is not running"
-        echo ""
-        echo -e "  ${YELLOW}Why:${NC} Database container must be running for your app to work."
-        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}docker-local up${NC}"
-        ((errors++))
+        # Container-based databases (mysql, pgsql, mariadb)
+        echo -e "  ${CYAN}Type:${NC} $db_connection | ${CYAN}Host:${NC} $db_host:$db_port | ${CYAN}DB:${NC} $db_database"
+
+        # Map connection type to container name
+        local container_name="${db_connection:-mysql}"
+        [ "$db_connection" = "pgsql" ] && container_name="postgres"
+        [ "$db_connection" = "mariadb" ] && container_name="mysql"  # MariaDB often uses mysql container
+
+        if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^$container_name$"; then
+            echo -e "  ${GREEN}✓${NC} Container '$container_name' is running"
+
+            # Test actual database connection
+            local conn_ok=false
+            case "$db_connection" in
+                mysql|mariadb)
+                    if docker exec $container_name mysql -u "${MYSQL_USER:-laravel}" -p"${MYSQL_PASSWORD:-secret}" -e "SELECT 1;" >/dev/null 2>&1; then
+                        conn_ok=true
+                    fi
+                    ;;
+                pgsql)
+                    if docker exec $container_name psql -U "${POSTGRES_USER:-laravel}" -c "SELECT 1;" >/dev/null 2>&1; then
+                        conn_ok=true
+                    fi
+                    ;;
+            esac
+
+            if [ "$conn_ok" = true ]; then
+                echo -e "  ${GREEN}✓${NC} Connection OK"
+            else
+                echo -e "  ${YELLOW}⚠${NC} Container running but connection test inconclusive"
+                echo -e "    ${DIM}This may be normal if using custom credentials${NC}"
+            fi
+        else
+            echo -e "  ${RED}✗${NC} Container '$container_name' is not running"
+            echo ""
+            echo -e "  ${YELLOW}Why:${NC} Database container must be running for your app to work."
+            echo -e "  ${YELLOW}Fix:${NC} ${CYAN}docker-local up${NC}"
+            ((errors++))
+        fi
     fi
     echo ""
     
@@ -3183,110 +3228,6 @@ VITE_REVERB_HOST="\${REVERB_HOST}"
 VITE_REVERB_PORT="\${REVERB_PORT}"
 VITE_REVERB_SCHEME="\${REVERB_SCHEME}"
 EOF
-}
-
-# ==============================================================================
-# ENV:CHECK - Verificar configurações
-# ==============================================================================
-
-cmd_env_check() {
-    local current_dir=$(pwd)
-    local env_file="$current_dir/.env"
-    
-    if [ ! -f "$env_file" ]; then
-        echo -e "${RED}Error: .env not found${NC}"
-        exit 1
-    fi
-    
-    local project_name=$(basename "$current_dir")
-    
-    show_logo
-    echo -e "${WHITE}Checking .env for: ${CYAN}$project_name${NC}"
-    echo ""
-    
-    get_env_value() {
-        grep "^$1=" "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'"
-    }
-    
-    local errors=0
-    local warnings=0
-    
-    # Hosts check
-    echo -e "${WHITE}┌─ /etc/hosts ─────────────────────────────────────────────────────┐${NC}"
-    local hosts_ok=true
-    for host in mysql postgres redis minio mailpit; do
-        if grep -q "127.0.0.1.*\b$host\b" /etc/hosts 2>/dev/null; then
-            echo -e "  ${GREEN}✓${NC} $host"
-        else
-            echo -e "  ${RED}✗${NC} $host"
-            hosts_ok=false
-        fi
-    done
-    [ "$hosts_ok" = false ] && echo -e "  ${YELLOW}Run: sudo \"\$(which docker-local)\" setup:hosts${NC}" && ((warnings++))
-    echo ""
-    
-    # Database
-    echo -e "${WHITE}┌─ Database ───────────────────────────────────────────────────────┐${NC}"
-    local db_connection=$(get_env_value "DB_CONNECTION")
-    local db_host=$(get_env_value "DB_HOST")
-    local db_port=$(get_env_value "DB_PORT")
-    
-    echo -e "  ${CYAN}Type:${NC} $db_connection | ${CYAN}Host:${NC} $db_host:$db_port"
-    
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^$db_connection$\|^mysql$\|^postgres$"; then
-        echo -e "  ${GREEN}✓${NC} Container running"
-        
-        if docker exec ${db_connection:-mysql} echo "OK" > /dev/null 2>&1; then
-            echo -e "  ${GREEN}✓${NC} Connection OK"
-        else
-            echo -e "  ${RED}✗${NC} Connection failed"
-            ((errors++))
-        fi
-    else
-        echo -e "  ${RED}✗${NC} Container not running"
-        ((errors++))
-    fi
-    echo ""
-    
-    # Redis
-    echo -e "${WHITE}┌─ Redis ──────────────────────────────────────────────────────────┐${NC}"
-    local redis_host=$(get_env_value "REDIS_HOST")
-    echo -e "  ${CYAN}Host:${NC} $redis_host"
-    
-    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^redis$"; then
-        echo -e "  ${GREEN}✓${NC} Container running"
-        if docker exec redis redis-cli ping 2>/dev/null | grep -q "PONG"; then
-            echo -e "  ${GREEN}✓${NC} PING OK"
-        fi
-    else
-        echo -e "  ${RED}✗${NC} Container not running"
-        ((errors++))
-    fi
-    echo ""
-    
-    # APP_URL
-    echo -e "${WHITE}┌─ Application ────────────────────────────────────────────────────┐${NC}"
-    local app_url=$(get_env_value "APP_URL")
-    echo -e "  ${CYAN}URL:${NC} $app_url"
-    
-    local domain=$(echo "$app_url" | sed -E 's|https?://||' | cut -d'/' -f1)
-    if ping -c 1 -W 1 "$domain" > /dev/null 2>&1; then
-        echo -e "  ${GREEN}✓${NC} DNS resolves"
-    else
-        echo -e "  ${YELLOW}⚠${NC} DNS not resolving"
-        ((warnings++))
-    fi
-    echo ""
-    
-    # Summary
-    echo -e "${WHITE}┌─ Summary ────────────────────────────────────────────────────────┐${NC}"
-    if [ $errors -eq 0 ] && [ $warnings -eq 0 ]; then
-        echo -e "  ${GREEN}✓ All checks passed!${NC}"
-    else
-        [ $errors -gt 0 ] && echo -e "  ${RED}✗ $errors error(s)${NC}"
-        [ $warnings -gt 0 ] && echo -e "  ${YELLOW}⚠ $warnings warning(s)${NC}"
-    fi
-    echo ""
 }
 
 # ==============================================================================
