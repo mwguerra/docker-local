@@ -16,3 +16,12 @@ docker-compose.override.yml
 
 # Dependencies
 composer.lock
+
+# IDE
+.idea/
+
+# Playwright
+.playwright-mcp/
+
+# Vendor temp files
+vendor/

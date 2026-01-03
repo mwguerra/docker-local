@@ -99,18 +99,18 @@ services:
       - php
     labels:
       - "traefik.enable=true"
-      # Main route for *.localhost
-      - "traefik.http.routers.nginx.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.localhost`)"
+      # Main route for *.localhost (Traefik v3 regex syntax)
+      - "traefik.http.routers.nginx.rule=HostRegexp(`^[a-z0-9-]+\\.localhost$$`)"
       - "traefik.http.routers.nginx.entrypoints=websecure"
       - "traefik.http.routers.nginx.tls=true"
       - "traefik.http.routers.nginx.priority=1"
-      # Route for *.test (custom domain)
-      - "traefik.http.routers.nginx-test.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.test`)"
+      # Route for *.test (custom domain - Traefik v3 regex syntax)
+      - "traefik.http.routers.nginx-test.rule=HostRegexp(`^[a-z0-9-]+\\.test$$`)"
       - "traefik.http.routers.nginx-test.entrypoints=websecure"
       - "traefik.http.routers.nginx-test.tls=true"
       - "traefik.http.routers.nginx-test.priority=1"
-      # Route for subdomains: *.project.test
-      - "traefik.http.routers.nginx-subdomains.rule=HostRegexp(`{sub:[a-z0-9-]+}.{project:[a-z0-9-]+}.test`)"
+      # Route for subdomains: *.project.test (Traefik v3 regex syntax)
+      - "traefik.http.routers.nginx-subdomains.rule=HostRegexp(`^[a-z0-9-]+\\.[a-z0-9-]+\\.test$$`)"
       - "traefik.http.routers.nginx-subdomains.entrypoints=websecure"
       - "traefik.http.routers.nginx-subdomains.tls=true"
       - "traefik.http.routers.nginx-subdomains.priority=2"
