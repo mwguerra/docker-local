@@ -48,9 +48,14 @@ LEGACY_DNSMASQ_LISTEN="/etc/dnsmasq.d/docker-local-listen.conf"
 LEGACY_RESOLVED_CONF="/etc/systemd/resolved.conf.d/docker-local.conf"
 LEGACY_RESOLVED_CONF2="/etc/systemd/resolved.conf.d/dnsmasq.conf"
 
-# macOS paths
-MACOS_DNSMASQ_DIR="/usr/local/etc/dnsmasq.d"
-MACOS_DNSMASQ_CONF="$MACOS_DNSMASQ_DIR/laravel-dev.conf"
+# macOS paths - detect Homebrew prefix (Intel: /usr/local, Apple Silicon: /opt/homebrew)
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    HOMEBREW_PREFIX="${HOMEBREW_PREFIX:-$(brew --prefix 2>/dev/null || echo "/usr/local")}"
+else
+    HOMEBREW_PREFIX="/usr/local"
+fi
+MACOS_DNSMASQ_DIR="$HOMEBREW_PREFIX/etc/dnsmasq.d"
+MACOS_DNSMASQ_CONF="$MACOS_DNSMASQ_DIR/docker-local.conf"
 
 # ==============================================================================
 # Handle --uninstall flag
@@ -129,6 +134,14 @@ if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ]; then
     if [ -f "$MACOS_DNSMASQ_CONF" ]; then
         rm -f "$MACOS_DNSMASQ_CONF"
         echo -e "${GREEN}✓${NC} Removed $MACOS_DNSMASQ_CONF"
+        removed_files=$((removed_files + 1))
+    fi
+
+    # Remove legacy macOS config name
+    MACOS_LEGACY_CONF="$MACOS_DNSMASQ_DIR/laravel-dev.conf"
+    if [ -f "$MACOS_LEGACY_CONF" ]; then
+        rm -f "$MACOS_LEGACY_CONF"
+        echo -e "${GREEN}✓${NC} Removed $MACOS_LEGACY_CONF (legacy)"
         removed_files=$((removed_files + 1))
     fi
 
