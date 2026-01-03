@@ -81,6 +81,8 @@ show_help() {
     echo -e "  ${GREEN}fix${NC} [options]         Diagnose and auto-fix common issues"
     echo -e "  ${GREEN}setup:hosts${NC}           Add Docker hostnames to /etc/hosts ${DIM}(sudo)${NC}"
     echo -e "  ${GREEN}setup:dns${NC}             Configure dnsmasq for *.test ${DIM}(sudo)${NC}"
+    echo -e "  ${GREEN}ssl:status${NC}            Show SSL certificate status"
+    echo -e "  ${GREEN}ssl:regenerate${NC}        Regenerate SSL certificates with mkcert"
     echo ""
     echo -e "${WHITE}Environment Commands:${NC}"
     echo -e "  ${GREEN}up${NC}                    Start Docker environment"
@@ -3658,6 +3660,14 @@ cmd_setup_hosts() {
     bash "$PACKAGE_DIR/scripts/setup-hosts.sh"
 }
 
+cmd_ssl_status() {
+    bash "$PACKAGE_DIR/scripts/ssl-status.sh"
+}
+
+cmd_ssl_regenerate() {
+    bash "$PACKAGE_DIR/scripts/ssl-regenerate.sh"
+}
+
 cmd_config() {
     echo -e "${WHITE}Configuration:${NC}"
     echo ""
@@ -4038,7 +4048,9 @@ case "$1" in
     setup) shift; cmd_setup "$@" ;;
     setup:dns) shift; cmd_setup_dns "$@" ;;
     setup:hosts) cmd_setup_hosts ;;
-    
+    ssl:status) cmd_ssl_status ;;
+    ssl:regenerate) cmd_ssl_regenerate ;;
+
     # Environment
     up) cmd_up ;;
     down) cmd_down ;;
