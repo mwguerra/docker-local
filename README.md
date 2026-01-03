@@ -333,11 +333,31 @@ docker-local open my-existing-app
 ```bash
 docker-local init              # Complete initial setup
 docker-local doctor            # Full system health check
+docker-local fix [options]     # Diagnose and auto-fix common issues
 docker-local config            # View current configuration
 docker-local setup:hosts       # Add Docker hostnames to /etc/hosts (sudo)
 docker-local setup:dns         # Configure dnsmasq for *.test (sudo)
 docker-local update            # Update Docker images
 ```
+
+**Fix command options:**
+
+```bash
+docker-local fix               # Run all checks, auto-fix what's possible
+docker-local fix --dns         # Only check/fix DNS issues
+docker-local fix --docker      # Only check/fix Docker daemon
+docker-local fix --services    # Only check/fix container services
+docker-local fix --hosts       # Only check/fix /etc/hosts
+docker-local fix --verbose     # Show detailed diagnostic info
+docker-local fix --dry-run     # Show what would be fixed without making changes
+```
+
+The `fix` command automatically detects and resolves issues like:
+- Docker daemon not running
+- Stopped containers
+- Missing systemd-resolved configuration for *.test DNS
+- Missing dnsmasq configuration
+- /etc/hosts not configured
 
 ### Environment Management
 
@@ -1191,11 +1211,15 @@ docker-compose up -d
 ### General Diagnostics
 
 ```bash
-docker-local doctor            # Full health check
+docker-local fix               # Auto-diagnose and fix common issues
+docker-local fix --dns -v      # Detailed DNS troubleshooting
+docker-local doctor            # Full health check (read-only)
 docker-local status            # Service status
 docker-local logs              # View all logs
 docker-local logs mysql        # View specific service logs
 ```
+
+The `fix` command is the recommended first step when troubleshooting - it automatically diagnoses issues and attempts to fix them where possible.
 
 ### Common Issues
 
@@ -1231,6 +1255,31 @@ newgrp docker
 
 # Or fix project permissions
 sudo chown -R $USER:$USER ~/projects
+```
+
+#### "*.test domains not resolving"
+
+```bash
+# Quick fix - run the fix command
+docker-local fix --dns
+
+# Follow the suggested commands (requires sudo)
+sudo "$(which docker-local)" setup:dns
+
+# Manual verification
+dig test.test @127.0.0.1     # Should return 127.0.0.1 (dnsmasq working)
+ping test.test               # Should resolve to 127.0.0.1 (full system working)
+```
+
+If dnsmasq is working but system DNS isn't:
+```bash
+# Check systemd-resolved configuration (Linux)
+cat /etc/systemd/resolved.conf.d/docker-local.conf
+
+# Should contain:
+# [Resolve]
+# DNS=127.0.0.1#53
+# Domains=~test. ~localhost.
 ```
 
 #### SSL Certificate Issues
