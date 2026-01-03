@@ -258,10 +258,13 @@ echo -e "  ${GREEN}✓${NC} Mailpit (email testing)"
 echo -e "  ${GREEN}✓${NC} Xdebug (debugging)"
 echo ""
 
-# Check if hosts file needs updating
-if ! grep -q "$PROJECT_NAME.test" /etc/hosts 2>/dev/null; then
-    echo -e "${YELLOW}Lembre-se de adicionar ao /etc/hosts (se não estiver usando dnsmasq):${NC}"
-    echo -e "  ${CYAN}127.0.0.1 $PROJECT_NAME.test${NC}"
+# Check if DNS is configured for .test domains
+if ! ping -c 1 -W 1 test.test > /dev/null 2>&1; then
+    echo -e "${YELLOW}DNS for .test domains not configured. Run:${NC}"
+    echo -e "  ${CYAN}sudo \"\$(which docker-local)\" setup:dns${NC}"
+    echo ""
+    echo -e "${DIM}Or add manually to /etc/hosts:${NC}"
+    echo -e "  ${DIM}127.0.0.1 $PROJECT_NAME.test${NC}"
     echo ""
 fi
 
