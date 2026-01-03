@@ -46,14 +46,17 @@ echo -e "${BLUE}Adicionando hosts ao $HOSTS_FILE:${NC}"
 echo -e "  ${GREEN}$HOSTS${NC}"
 echo ""
 
-# Verificar se já existe entrada para este domínio
-if grep -q "127.0.0.1 $DOMAIN" "$HOSTS_FILE"; then
-    echo -e "${YELLOW}⚠ Entrada para $DOMAIN já existe. Atualizando...${NC}"
-    # Remover entrada existente
-    sed -i "/127.0.0.1.*$DOMAIN/d" "$HOSTS_FILE"
+# Check if entry already exists for this domain (marked by docker-local)
+# We only modify our own entries (those with our marker)
+if grep -q "$MARKER" "$HOSTS_FILE" && grep "$MARKER" "$HOSTS_FILE" | grep -q " $DOMAIN"; then
+    echo -e "${YELLOW}⚠ Entry for $DOMAIN already exists. Updating...${NC}"
+    # Remove only OUR entry (lines with our marker that contain this domain)
+    # Using a temp file for safety instead of in-place edit
+    grep -v "^127\.0\.0\.1.*[[:space:]]$DOMAIN[[:space:]].*$MARKER" "$HOSTS_FILE" > "$HOSTS_FILE.tmp"
+    mv "$HOSTS_FILE.tmp" "$HOSTS_FILE"
 fi
 
-# Adicionar nova entrada
+# Add new entry (always with our marker so we can identify it later)
 echo "127.0.0.1 $HOSTS $MARKER" >> "$HOSTS_FILE"
 
 echo -e "${GREEN}✓ Hosts adicionados com sucesso!${NC}"

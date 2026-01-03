@@ -3289,7 +3289,7 @@ cmd_setup_editor() {
 cmd_setup_dns() {
     check_sudo "setup:dns"
     check_docker_env
-    bash "$PACKAGE_DIR/scripts/setup-dns.sh"
+    bash "$PACKAGE_DIR/scripts/setup-dns.sh" "$@"
 }
 
 cmd_setup_hosts() {
@@ -3675,7 +3675,7 @@ case "$1" in
     init) shift; cmd_init "$@" ;;
     doctor) cmd_doctor ;;
     setup) shift; cmd_setup "$@" ;;
-    setup:dns) cmd_setup_dns ;;
+    setup:dns) shift; cmd_setup_dns "$@" ;;
     setup:hosts) cmd_setup_hosts ;;
     
     # Environment
