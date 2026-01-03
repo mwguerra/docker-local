@@ -826,10 +826,47 @@ SELECT * FROM items ORDER BY embedding <-> '[...]' LIMIT 10;
 
 ### AI/Whisper Transcription
 
-PHP-AI container with OpenAI Whisper for audio transcription:
+Two options for speech-to-text transcription:
+
+#### Option 1: Whisper API Container (Recommended)
+
+A dedicated Whisper ASR webservice with OpenAI-compatible HTTP API (using [faster-whisper-server](https://github.com/fedirz/faster-whisper-server)):
 
 ```bash
-# Run transcription
+# API endpoint (internal Docker network)
+http://whisper:8000/v1/audio/transcriptions
+
+# API endpoint (from host machine)
+http://localhost:9501/v1/audio/transcriptions
+
+# Health check
+curl http://localhost:9501/health
+```
+
+**Laravel Configuration (.env):**
+```bash
+WHISPER_API_URL=http://whisper:8000
+WHISPER_TIMEOUT=300
+WHISPER_MODEL=base
+```
+
+**Example API Call:**
+```bash
+curl -X POST http://localhost:9501/v1/audio/transcriptions \
+  -F "file=@audio.mp3" \
+  -F "model=base" \
+  -F "language=en" \
+  -F "response_format=json"
+```
+
+**Web UI:** https://whisper.localhost
+
+#### Option 2: PHP-AI Container (CLI)
+
+For direct CLI access to Whisper:
+
+```bash
+# Run transcription via CLI
 docker-compose exec php-ai whisper audio.mp3 --model base --language en
 
 # Or from your Laravel app
@@ -850,6 +887,7 @@ Configure the model in `.env`:
 ```bash
 WHISPER_MODEL=base
 WHISPER_LANGUAGE=en
+WHISPER_PORT=9501
 ```
 
 ### Laravel Workers (Horizon, Reverb, Scheduler)
@@ -1007,7 +1045,8 @@ If your project has its own Docker configuration, you can migrate to docker-loca
 | Nginx | Yes | Dynamic multi-project routing |
 | Traefik | Yes | Reverse proxy with SSL |
 | RTMP Server | Yes | Live streaming with HLS |
-| Whisper AI | Yes | php-ai container with transcription |
+| Whisper API | Yes | HTTP API for speech-to-text |
+| PHP-AI | Yes | PHP with Whisper CLI |
 | Node.js 20 | Yes | Frontend build tooling |
 
 ### What Stays Project-Specific

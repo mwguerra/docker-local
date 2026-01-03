@@ -365,6 +365,38 @@ services:
     stdin_open: true
     command: ["sh", "-c", "echo 'Node.js container ready' && tail -f /dev/null"]
 
+  # ============================================================================
+  # Whisper ASR - Speech-to-Text API (OpenAI-compatible)
+  # Uses faster-whisper-server for OpenAI-compatible /v1/audio/transcriptions
+  # API: http://whisper:8000/v1/audio/transcriptions
+  # Docs: http://localhost:9501/docs
+  # ============================================================================
+  whisper:
+    image: fedirz/faster-whisper-server:latest-cpu
+    container_name: whisper
+    restart: unless-stopped
+    ports:
+      - "${WHISPER_PORT:-9501}:8000"
+    environment:
+      WHISPER__MODEL: ${WHISPER_MODEL:-Systran/faster-whisper-base}
+      WHISPER__INFERENCE_DEVICE: cpu
+    volumes:
+      - whisper_cache:/root/.cache/huggingface
+    networks:
+      - laravel-dev
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.whisper.rule=Host(`whisper.localhost`)"
+      - "traefik.http.routers.whisper.entrypoints=websecure"
+      - "traefik.http.routers.whisper.tls=true"
+      - "traefik.http.services.whisper.loadbalancer.server.port=8000"
+
 volumes:
   mysql_data:
     name: laravel-dev-mysql
@@ -380,3 +412,5 @@ volumes:
     name: laravel-dev-rtmp-hls
   rtmp_recordings:
     name: laravel-dev-rtmp-recordings
+  whisper_cache:
+    name: laravel-dev-whisper-cache
