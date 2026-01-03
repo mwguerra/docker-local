@@ -139,6 +139,67 @@ describe('ConfigValidator', function () {
             expect($hasConflict)->toBeTrue();
         });
 
+        it('validates reverb port configuration', function () {
+            $config = [
+                'version' => '2.0.0',
+                'projects_path' => '/path',
+                'reverb' => [
+                    'port' => 8080,
+                    'project_name' => 'myapp',
+                    'app_id' => 'my-app-id',
+                    'app_key' => 'my-app-key',
+                    'app_secret' => 'my-app-secret',
+                    'scaling_enabled' => false,
+                ],
+            ];
+
+            $result = $this->validator->validate($config);
+
+            expect($result)->toBeTrue();
+            expect($this->validator->getErrors())->toBeEmpty();
+        });
+
+        it('fails with invalid reverb port', function () {
+            $config = [
+                'version' => '2.0.0',
+                'projects_path' => '/path',
+                'reverb' => [
+                    'port' => 99999, // Invalid port
+                ],
+            ];
+
+            $result = $this->validator->validate($config);
+
+            expect($result)->toBeFalse();
+            expect($this->validator->getErrors())->toContain("Invalid port number for 'reverb.port': 99999 (must be 1-65535)");
+        });
+
+        it('detects reverb port conflict with other services', function () {
+            $config = [
+                'version' => '2.0.0',
+                'projects_path' => '/path',
+                'mailpit' => [
+                    'web_port' => 8080,
+                ],
+                'reverb' => [
+                    'port' => 8080, // Conflict with Mailpit
+                ],
+            ];
+
+            $result = $this->validator->validate($config);
+
+            expect($result)->toBeFalse();
+            $errors = $this->validator->getErrors();
+            $hasConflict = false;
+            foreach ($errors as $error) {
+                if (str_contains($error, 'Port conflict')) {
+                    $hasConflict = true;
+                    break;
+                }
+            }
+            expect($hasConflict)->toBeTrue();
+        });
+
         it('allows optional keys to be missing', function () {
             $config = [
                 'version' => '2.0.0',

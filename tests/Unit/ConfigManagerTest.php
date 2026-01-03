@@ -276,6 +276,22 @@ describe('ConfigManager', function () {
             expect($config->get('postgres.port'))->toBe(5432);
             expect($config->get('redis.port'))->toBe(6379);
         });
+
+        it('sets default reverb configuration values', function () {
+            $pathResolver = Mockery::mock(PathResolver::class);
+            $pathResolver->shouldReceive('getConfigDirectory')->andReturn('/tmp');
+            $pathResolver->shouldReceive('resolve')->andReturnUsing(fn($path) => str_replace('~', '/home/test', $path));
+
+            $config = new ConfigManager($pathResolver);
+            $config->initializeDefaults();
+
+            expect($config->get('reverb.port'))->toBe(8080);
+            expect($config->get('reverb.project_name'))->toBe('myapp');
+            expect($config->get('reverb.app_id'))->toBe('my-app-id');
+            expect($config->get('reverb.app_key'))->toBe('my-app-key');
+            expect($config->get('reverb.app_secret'))->toBe('my-app-secret');
+            expect($config->get('reverb.scaling_enabled'))->toBeFalse();
+        });
     });
 
     describe('exists()', function () {
