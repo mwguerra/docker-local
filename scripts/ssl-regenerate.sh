@@ -105,7 +105,9 @@ if [ -d "$PROJECTS_DIR" ]; then
             domain_name=$(echo "$project_name" | tr '_' '-')
             # Add project.test domain
             DOMAINS+=("${domain_name}.test")
-            echo -e "    ${DIM}+ ${domain_name}.test${NC}"
+            # Add wildcard for subdomains (*.project.test) for apps with subdomain routing
+            DOMAINS+=("*.${domain_name}.test")
+            echo -e "    ${DIM}+ ${domain_name}.test, *.${domain_name}.test${NC}"
         fi
     done < <(find "$PROJECTS_DIR" -maxdepth 4 -name "artisan" -type f 2>/dev/null | xargs -I{} dirname {} 2>/dev/null | sort -u)
 fi
