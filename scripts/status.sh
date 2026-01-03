@@ -51,6 +51,7 @@ check_service "PostgreSQL" "postgres" "17"
 check_service "Redis" "redis" "8"
 check_service "Mailpit" "mailpit" "latest"
 check_service "MinIO" "minio" "latest"
+check_service "Reverb" "reverb" "WS"
 
 echo ""
 echo -e "${YELLOW}Versões Detalhadas:${NC}"
@@ -131,6 +132,18 @@ else
     echo -e "${RED}✗ Falha na conexão${NC}"
 fi
 
+# Testar Reverb WebSocket
+printf "  Reverb:     "
+if docker ps --format '{{.Names}}' | grep -q "^reverb$"; then
+    if docker exec reverb php -r "@fsockopen('127.0.0.1', 8080)" > /dev/null 2>&1; then
+        echo -e "${GREEN}✓ Conectado${NC} (reverb:8080)"
+    else
+        echo -e "${YELLOW}○ Starting${NC} (reverb:8080)"
+    fi
+else
+    echo -e "${RED}✗ Não disponível${NC}"
+fi
+
 echo ""
 echo -e "${YELLOW}Extensões PHP Instaladas:${NC}"
 echo ""
@@ -147,6 +160,7 @@ echo "  • https://traefik.localhost     - Dashboard Traefik"
 echo "  • https://mail.localhost        - Mailpit (email testing)"
 echo "  • https://minio.localhost       - MinIO Console"
 echo "  • https://s3.localhost          - MinIO API (S3)"
+echo "  • wss://ws.localhost            - Reverb WebSocket"
 echo "  • https://meuprojeto.test       - Seu projeto Laravel"
 echo ""
 echo -e "${YELLOW}Portas Locais:${NC}"
@@ -161,5 +175,6 @@ echo "  │ MinIO API   │ localhost:9000   │ minio / minio123            │
 echo "  │ MinIO Web   │ localhost:9001   │ minio / minio123            │"
 echo "  │ Mailpit     │ localhost:1025   │ SMTP (sem auth)             │"
 echo "  │ Mailpit Web │ localhost:8025   │ -                           │"
+echo "  │ Reverb WS   │ localhost:8080   │ app-id/key/secret in .env   │"
 echo "  └─────────────┴──────────────────┴─────────────────────────────┘"
 echo ""

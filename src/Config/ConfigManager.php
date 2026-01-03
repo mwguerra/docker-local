@@ -250,6 +250,14 @@ class ConfigManager
                 'web_port' => 8025,
                 'smtp_port' => 1025,
             ],
+            'reverb' => [
+                'port' => 8080,
+                'project_name' => 'myapp',
+                'app_id' => 'my-app-id',
+                'app_key' => 'my-app-key',
+                'app_secret' => 'my-app-secret',
+                'scaling_enabled' => false,
+            ],
         ];
 
         $this->loaded = true;

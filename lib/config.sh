@@ -219,6 +219,14 @@ load_env() {
     export XDEBUG_ENABLED=$(get_nested_config "xdebug.enabled" "true")
     export XDEBUG_MODE=$(get_nested_config "xdebug.mode" "develop,debug")
 
+    # Load Reverb settings
+    export REVERB_PORT=$(get_nested_config "reverb.port" "8080")
+    export REVERB_PROJECT_NAME=$(get_nested_config "reverb.project_name" "myapp")
+    export REVERB_APP_ID=$(get_nested_config "reverb.app_id" "my-app-id")
+    export REVERB_APP_KEY=$(get_nested_config "reverb.app_key" "my-app-key")
+    export REVERB_APP_SECRET=$(get_nested_config "reverb.app_secret" "my-app-secret")
+    export REVERB_SCALING_ENABLED=$(get_nested_config "reverb.scaling_enabled" "false")
+
     # Load user settings (using DOCKER_ prefix to avoid readonly UID/GID)
     export DOCKER_UID="${DOCKER_UID:-$(id -u)}"
     export DOCKER_GID="${DOCKER_GID:-$(id -g)}"

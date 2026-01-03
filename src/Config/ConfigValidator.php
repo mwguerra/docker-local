@@ -45,6 +45,14 @@ class ConfigValidator
             'web_port' => 'integer',
             'smtp_port' => 'integer',
         ],
+        'reverb' => [
+            'port' => 'integer',
+            'project_name' => 'string',
+            'app_id' => 'string',
+            'app_key' => 'string',
+            'app_secret' => 'string',
+            'scaling_enabled' => 'boolean',
+        ],
     ];
 
     /**
@@ -142,6 +150,7 @@ class ConfigValidator
             'minio.console_port',
             'mailpit.web_port',
             'mailpit.smtp_port',
+            'reverb.port',
         ];
 
         foreach ($portKeys as $key) {
@@ -169,6 +178,7 @@ class ConfigValidator
             'minio.console_port' => 'MinIO Console',
             'mailpit.web_port' => 'Mailpit Web',
             'mailpit.smtp_port' => 'Mailpit SMTP',
+            'reverb.port' => 'Reverb WebSocket',
         ];
 
         foreach ($portKeys as $key => $name) {
