@@ -91,7 +91,9 @@ show_help() {
     echo -e "  ${GREEN}clean${NC}                 Clean caches, logs, Docker"
     echo ""
     echo -e "${WHITE}Project Commands:${NC}"
-    echo -e "  ${GREEN}list${NC}                  List all Laravel projects"
+    echo -e "  ${GREEN}park${NC} [path]           Set projects directory (like Valet)"
+    echo -e "  ${GREEN}link${NC}                  Rescan and link all Laravel projects"
+    echo -e "  ${GREEN}list${NC}                  List all Laravel projects (recursive)"
     echo -e "  ${GREEN}make:laravel${NC} <name>   Create new Laravel project"
     echo -e "  ${GREEN}clone${NC} <repo>          Clone and setup existing project"
     echo -e "  ${GREEN}open${NC} [name|--mail]    Open project/service in browser"
@@ -395,53 +397,281 @@ run_composer() {
 }
 
 # ==============================================================================
+# Project Discovery & Linking Helpers
+# ==============================================================================
+
+# Scan for Laravel projects recursively
+# Outputs: one project path per line
+scan_laravel_projects() {
+    local projects_dir="${1:-$PROJECTS_DIR}"
+
+    if [ ! -d "$projects_dir" ]; then
+        return
+    fi
+
+    # Find all artisan files, excluding .docker-local-links and vendor directories
+    find "$projects_dir" -name "artisan" -type f \
+        -not -path "*/.docker-local-links/*" \
+        -not -path "*/vendor/*" \
+        -not -path "*/node_modules/*" \
+        2>/dev/null | while read -r artisan_file; do
+        dirname "$artisan_file"
+    done
+}
+
+# Create symlinks for all discovered projects
+# Returns: number of projects linked
+create_project_links() {
+    local projects_dir="${1:-$PROJECTS_DIR}"
+    local links_dir="$projects_dir/.docker-local-links"
+    local count=0
+
+    # Create links directory
+    mkdir -p "$links_dir"
+
+    # Clear existing symlinks (only symlinks, not regular files/dirs)
+    find "$links_dir" -maxdepth 1 -type l -delete 2>/dev/null
+
+    # Create new links
+    scan_laravel_projects "$projects_dir" | while read -r project_path; do
+        local name=$(basename "$project_path")
+        local relative_path=$(realpath --relative-to="$links_dir" "$project_path" 2>/dev/null || echo "$project_path")
+
+        # Create symlink
+        ln -sf "$relative_path" "$links_dir/$name" 2>/dev/null
+        count=$((count + 1))
+    done
+
+    echo "$count"
+}
+
+# Detect and report name conflicts
+# Returns: 0 if no conflicts, 1 if conflicts found
+detect_name_conflicts() {
+    local projects_dir="${1:-$PROJECTS_DIR}"
+    local -A seen_names
+    local -A conflict_paths
+    local has_conflicts=false
+
+    # Build list of all project names and their paths
+    while read -r project_path; do
+        local name=$(basename "$project_path")
+
+        if [ -n "${seen_names[$name]:-}" ]; then
+            # Conflict detected
+            has_conflicts=true
+            if [ -z "${conflict_paths[$name]:-}" ]; then
+                conflict_paths[$name]="${seen_names[$name]}"
+            fi
+            conflict_paths[$name]="${conflict_paths[$name]}|$project_path"
+        else
+            seen_names[$name]="$project_path"
+        fi
+    done < <(scan_laravel_projects "$projects_dir")
+
+    # Report conflicts
+    if [ "$has_conflicts" = true ]; then
+        echo ""
+        echo -e "${YELLOW}⚠ Warning: Duplicate project names found:${NC}"
+
+        for name in "${!conflict_paths[@]}"; do
+            echo -e "  ${WHITE}$name${NC}:"
+            echo "${conflict_paths[$name]}" | tr '|' '\n' | while read -r path; do
+                echo -e "    ${DIM}- $path${NC}"
+            done
+            echo -e "  ${DIM}Only the first one will be accessible at ${CYAN}$name.test${NC}"
+        done
+        echo ""
+        return 1
+    fi
+
+    return 0
+}
+
+# Get project count
+count_laravel_projects() {
+    local projects_dir="${1:-$PROJECTS_DIR}"
+    scan_laravel_projects "$projects_dir" | wc -l
+}
+
+# ==============================================================================
+# PARK - Set projects directory (like Valet)
+# ==============================================================================
+
+cmd_park() {
+    local path="${1:-}"
+
+    # If no argument, show current parked path
+    if [ -z "$path" ]; then
+        local current_path=$(get_projects_dir)
+        echo -e "${WHITE}Currently parked:${NC} ${CYAN}$current_path${NC}"
+        echo ""
+
+        local count=$(count_laravel_projects "$current_path")
+        echo -e "Laravel projects found: ${GREEN}$count${NC}"
+
+        if [ "$count" -gt 0 ]; then
+            detect_name_conflicts "$current_path"
+        fi
+        return
+    fi
+
+    # Expand ~ to home directory
+    path="${path/#\~/$HOME}"
+
+    # Validate path exists or offer to create
+    if [ ! -d "$path" ]; then
+        read -p "Directory does not exist. Create it? [y/N] " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            mkdir -p "$path" || {
+                echo -e "${RED}Failed to create directory${NC}"
+                exit 1
+            }
+            echo -e "${GREEN}✓ Created directory: $path${NC}"
+        else
+            echo -e "${YELLOW}Cancelled.${NC}"
+            return 1
+        fi
+    fi
+
+    # Store as ~ path if it's in home directory for portability
+    local store_path="$path"
+    if [[ "$path" == "$HOME"* ]]; then
+        store_path="~${path#$HOME}"
+    fi
+
+    # Update config
+    local result=$(php "$PACKAGE_DIR/src/cli-helper.php" set "projects_path" "$store_path" 2>&1)
+
+    if [ "$result" = "OK" ]; then
+        echo -e "${GREEN}✓ Parked directory: $path${NC}"
+
+        # Update PROJECTS_DIR for current session
+        PROJECTS_DIR="$path"
+
+        # Scan and create links
+        echo ""
+        echo -e "${BLUE}Scanning for Laravel projects...${NC}"
+
+        create_project_links "$path" > /dev/null
+
+        local count=$(count_laravel_projects "$path")
+        echo -e "${GREEN}✓ Found $count Laravel project(s)${NC}"
+
+        # Check for conflicts
+        detect_name_conflicts "$path"
+
+        # Show restart notice
+        echo -e "${YELLOW}Note: Restart docker-local services for changes to take effect.${NC}"
+        echo -e "  Run: ${CYAN}docker-local restart${NC}"
+    else
+        echo -e "${RED}Failed to update config: $result${NC}"
+        exit 1
+    fi
+}
+
+# ==============================================================================
+# LINK - Rescan and recreate project links
+# ==============================================================================
+
+cmd_link() {
+    local projects_dir=$(get_projects_dir)
+
+    if [ ! -d "$projects_dir" ]; then
+        echo -e "${RED}Projects directory not found: $projects_dir${NC}"
+        echo -e "Run: ${CYAN}docker-local park <path>${NC}"
+        exit 1
+    fi
+
+    echo -e "${BLUE}Scanning for Laravel projects in $projects_dir...${NC}"
+    echo ""
+
+    # Create links
+    create_project_links "$projects_dir" > /dev/null
+
+    local count=$(count_laravel_projects "$projects_dir")
+
+    if [ "$count" -eq 0 ]; then
+        echo -e "${YELLOW}No Laravel projects found.${NC}"
+        echo -e "Create one with: ${CYAN}docker-local make:laravel <name>${NC}"
+        return
+    fi
+
+    echo -e "${GREEN}✓ Linked $count Laravel project(s)${NC}"
+    echo ""
+
+    # List projects with their paths
+    echo -e "${WHITE}Projects:${NC}"
+    scan_laravel_projects "$projects_dir" | while read -r project_path; do
+        local name=$(basename "$project_path")
+        local relative_path="${project_path#$projects_dir/}"
+        echo -e "  ${GREEN}$name${NC} ${DIM}($relative_path)${NC} → ${CYAN}https://$name.test${NC}"
+    done
+
+    # Check for conflicts
+    detect_name_conflicts "$projects_dir"
+}
+
+# ==============================================================================
 # LIST - Listar projetos
 # ==============================================================================
 
 cmd_list() {
+    local projects_dir=$(get_projects_dir)
+
     echo -e "${WHITE}┌─────────────────────────────────────────────────────────────────┐${NC}"
-    echo -e "${WHITE}│  Laravel Projects in ~/projects                                 │${NC}"
+    echo -e "${WHITE}│  Laravel Projects                                               │${NC}"
     echo -e "${WHITE}└─────────────────────────────────────────────────────────────────┘${NC}"
+    echo -e "  ${DIM}Parked: $projects_dir${NC}"
     echo ""
-    
-    if [ ! -d "$PROJECTS_DIR" ]; then
+
+    if [ ! -d "$projects_dir" ]; then
         echo -e "  ${DIM}No projects directory found${NC}"
-        echo -e "  Run: ${CYAN}docker-local make:laravel <name>${NC}"
+        echo -e "  Run: ${CYAN}docker-local park <path>${NC}"
         return
     fi
-    
-    local found=false
-    
-    printf "  ${WHITE}%-20s %-35s %s${NC}\n" "NAME" "URL" "STATUS"
-    echo -e "  ${DIM}────────────────────────────────────────────────────────────────${NC}"
-    
-    for dir in "$PROJECTS_DIR"/*/; do
-        if [ -f "$dir/artisan" ]; then
-            found=true
-            local name=$(basename "$dir")
-            local url="https://$name.test"
-            local status=""
-            
-            # Verificar se acessível
-            if curl -sk --connect-timeout 1 "$url" > /dev/null 2>&1; then
-                status="${GREEN}✓ accessible${NC}"
-            elif ping -c 1 -W 1 "$name.test" > /dev/null 2>&1; then
-                status="${YELLOW}○ DNS ok${NC}"
-            else
-                status="${RED}✗ DNS not configured${NC}"
-            fi
-            
-            printf "  %-20s %-35s %b\n" "$name" "$url" "$status"
-        fi
-    done
-    
-    if [ "$found" = false ]; then
+
+    local count=$(count_laravel_projects "$projects_dir")
+
+    if [ "$count" -eq 0 ]; then
         echo -e "  ${DIM}No Laravel projects found${NC}"
         echo ""
         echo -e "  Create one with: ${CYAN}docker-local make:laravel <name>${NC}"
+        return
     fi
-    
+
+    printf "  ${WHITE}%-20s %-30s %-20s %s${NC}\n" "NAME" "PATH" "URL" "STATUS"
+    echo -e "  ${DIM}──────────────────────────────────────────────────────────────────────────────────${NC}"
+
+    # Use recursive scanning
+    scan_laravel_projects "$projects_dir" | while read -r project_path; do
+        local name=$(basename "$project_path")
+        local relative_path="${project_path#$projects_dir/}"
+        local url="https://$name.test"
+        local status=""
+
+        # Check if accessible (quick check)
+        if curl -sk --connect-timeout 1 "$url" > /dev/null 2>&1; then
+            status="${GREEN}✓ ok${NC}"
+        elif ping -c 1 -W 1 "$name.test" > /dev/null 2>&1; then
+            status="${YELLOW}○ DNS${NC}"
+        else
+            status="${RED}✗ no DNS${NC}"
+        fi
+
+        # Truncate path if too long
+        if [ ${#relative_path} -gt 28 ]; then
+            relative_path="...${relative_path: -25}"
+        fi
+
+        printf "  %-20s %-30s %-20s %b\n" "$name" "$relative_path" "$url" "$status"
+    done
+
     echo ""
+
+    # Check for conflicts
+    detect_name_conflicts "$projects_dir"
 }
 
 # ==============================================================================
@@ -3459,6 +3689,8 @@ case "$1" in
     clean) shift; cmd_clean "$@" ;;
     
     # Projects
+    park) shift; cmd_park "$@" ;;
+    link) cmd_link ;;
     list|ls) cmd_list ;;
     make:laravel) shift; cmd_make_laravel "$@" ;;
     clone) shift; cmd_clone "$@" ;;
