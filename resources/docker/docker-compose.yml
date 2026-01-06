@@ -281,6 +281,69 @@ services:
       exit 0;
       "
 
+  # ============================================================================
+  # Laravel Reverb - Standalone WebSocket Server (Multi-App Support)
+  # Serves all projects simultaneously - each connects with own credentials
+  # Apps managed via: docker-local reverb app:add/list/remove
+  # Documentation: https://laravel.com/docs/reverb
+  # ============================================================================
+  reverb:
+    build:
+      context: ${DOCKER_LOCAL_PACKAGE_DIR:-./}/php
+      dockerfile: Dockerfile
+      args:
+        - XDEBUG_ENABLED=false
+        - UID=${DOCKER_UID:-1000}
+        - GID=${DOCKER_GID:-1000}
+    container_name: reverb
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - ${DOCKER_LOCAL_PACKAGE_DIR:-./../..}/reverb-server:/app:cached
+      - reverb_vendor:/app/vendor
+      - ${DOCKER_LOCAL_CONFIG_DIR:-~/.config/docker-local}/reverb-apps.json:/data/apps.json:ro
+    ports:
+      - "${REVERB_PORT:-6001}:6001"
+    environment:
+      - REVERB_SERVER_HOST=0.0.0.0
+      - REVERB_SERVER_PORT=6001
+      - REVERB_HOST=ws.localhost
+      - REVERB_APPS_FILE=/data/apps.json
+      - REVERB_SCALING_ENABLED=${REVERB_SCALING_ENABLED:-false}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    networks:
+      - laravel-dev
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: >
+      sh -c "
+        if [ ! -f /app/vendor/autoload.php ]; then
+          echo 'Installing Reverb server dependencies...'
+          composer install --no-dev --optimize-autoloader --no-interaction
+        fi
+        echo 'Starting Reverb WebSocket server...'
+        php artisan reverb:start --host=0.0.0.0 --port=6001
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/6001' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    labels:
+      - "traefik.enable=true"
+      # WebSocket route for wss://ws.localhost
+      - "traefik.http.routers.reverb.rule=Host(`ws.localhost`)"
+      - "traefik.http.routers.reverb.entrypoints=websecure"
+      - "traefik.http.routers.reverb.tls=true"
+      - "traefik.http.services.reverb.loadbalancer.server.port=6001"
+      # WebSocket headers for proper upgrade
+      - "traefik.http.middlewares.reverb-headers.headers.customrequestheaders.Connection=Upgrade"
+      - "traefik.http.middlewares.reverb-headers.headers.customrequestheaders.Upgrade=websocket"
+      - "traefik.http.routers.reverb.middlewares=reverb-headers"
+
 volumes:
   mysql_data:
     name: laravel-dev-mysql
@@ -292,3 +355,5 @@ volumes:
     name: laravel-dev-minio
   mailpit_data:
     name: laravel-dev-mailpit
+  reverb_vendor:
+    name: laravel-dev-reverb-vendor

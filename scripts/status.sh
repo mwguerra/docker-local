@@ -154,10 +154,10 @@ fi
 # Testar Reverb WebSocket
 printf "  Reverb:     "
 if docker ps --format '{{.Names}}' | grep -q "^reverb$"; then
-    if timeout 2 bash -c '</dev/tcp/127.0.0.1/8080' 2>/dev/null; then
-        echo -e "${GREEN}✓ Conectado${NC} (reverb:8080)"
+    if timeout 2 bash -c '</dev/tcp/127.0.0.1/6001' 2>/dev/null; then
+        echo -e "${GREEN}✓ Conectado${NC} (reverb:6001)"
     else
-        echo -e "${YELLOW}○ Starting${NC} (reverb:8080)"
+        echo -e "${YELLOW}○ Starting${NC} (reverb:6001)"
     fi
 else
     echo -e "${RED}✗ Não disponível${NC}"
@@ -194,6 +194,6 @@ echo "  │ MinIO API   │ localhost:9000   │ minio / minio123            │
 echo "  │ MinIO Web   │ localhost:9001   │ minio / minio123            │"
 echo "  │ Mailpit     │ localhost:1025   │ SMTP (sem auth)             │"
 echo "  │ Mailpit Web │ localhost:8025   │ -                           │"
-echo "  │ Reverb WS   │ localhost:8080   │ app-id/key/secret in .env   │"
+echo "  │ Reverb WS   │ localhost:6001   │ app-id/key/secret in .env   │"
 echo "  └─────────────┴──────────────────┴─────────────────────────────┘"
 echo ""

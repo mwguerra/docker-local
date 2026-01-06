@@ -1468,7 +1468,7 @@ cmd_reverb_status() {
             echo -e "  Server:  ${YELLOW}● Running ($status)${NC}"
         fi
         echo "  URL:     wss://ws.localhost"
-        echo "  Port:    localhost:8080"
+        echo "  Port:    localhost:6001"
     else
         echo -e "  Server:  ${RED}○ Not running${NC}"
     fi
@@ -3642,7 +3642,7 @@ REVERB_APP_ID=$reverb_app_id
 REVERB_APP_KEY=$reverb_app_key
 REVERB_APP_SECRET=$reverb_app_secret
 REVERB_HOST="localhost"
-REVERB_PORT=8080
+REVERB_PORT=6001
 REVERB_SCHEME=http
 
 VITE_APP_NAME="\${APP_NAME}"
