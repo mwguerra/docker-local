@@ -81,6 +81,7 @@ show_help() {
     echo -e "  ${GREEN}fix${NC} [options]         Diagnose and auto-fix common issues"
     echo -e "  ${GREEN}setup:hosts${NC}           Add Docker hostnames to /etc/hosts ${DIM}(sudo)${NC}"
     echo -e "  ${GREEN}setup:dns${NC}             Configure dnsmasq for *.test ${DIM}(sudo)${NC}"
+    echo -e "  ${GREEN}setup:system${NC}          Run both setup:hosts and setup:dns ${DIM}(sudo)${NC}"
     echo -e "  ${GREEN}ssl:status${NC}            Show SSL certificate status"
     echo -e "  ${GREEN}ssl:regenerate${NC}        Regenerate SSL certificates with mkcert"
     echo ""
@@ -1862,13 +1863,27 @@ cmd_doctor() {
         ((warnings++))
     fi
     
-    if [ -f /etc/dnsmasq.d/laravel-dev.conf ] || [ -f /usr/local/etc/dnsmasq.d/laravel-dev.conf ]; then
-        echo -e "  ${GREEN}✓${NC} dnsmasq configured"
-        
+    # Check for NetworkManager dnsmasq config (current) or macOS config or legacy paths
+    local dnsmasq_configured=false
+    if [ -f /etc/NetworkManager/dnsmasq.d/docker-local.conf ]; then
+        echo -e "  ${GREEN}✓${NC} dnsmasq configured (NetworkManager)"
+        dnsmasq_configured=true
+    elif [ -f "$HOMEBREW_PREFIX/etc/dnsmasq.d/docker-local.conf" ] 2>/dev/null || [ -f /usr/local/etc/dnsmasq.d/docker-local.conf ]; then
+        echo -e "  ${GREEN}✓${NC} dnsmasq configured (macOS)"
+        dnsmasq_configured=true
+    elif [ -f /etc/dnsmasq.d/laravel-dev.conf ] || [ -f /usr/local/etc/dnsmasq.d/laravel-dev.conf ]; then
+        echo -e "  ${YELLOW}⚠${NC} dnsmasq configured (legacy path)"
+        echo -e "      ${DIM}Consider running: sudo \"\$(which docker-local)\" setup:dns${NC}"
+        dnsmasq_configured=true
+        ((warnings++))
+    fi
+
+    if [ "$dnsmasq_configured" = true ]; then
         if ping -c 1 -W 1 test.test > /dev/null 2>&1; then
             echo -e "  ${GREEN}✓${NC} *.test resolving"
         else
             echo -e "  ${YELLOW}⚠${NC} *.test not resolving"
+            echo -e "      ${DIM}Try: sudo systemctl restart NetworkManager${NC}"
             ((warnings++))
         fi
     else
@@ -2183,67 +2198,101 @@ cmd_fix() {
         echo -e "${WHITE}[DNS - *.test resolution]${NC}"
 
         local dns_issues=()
+        local is_macos=false
+        [[ "$OSTYPE" == "darwin"* ]] && is_macos=true
 
-        # Check 1: dnsmasq installed
-        if ! command -v dnsmasq &> /dev/null; then
-            echo -e "  ${RED}✗${NC} dnsmasq not installed"
-            dns_issues+=("install_dnsmasq")
-            inc_issues
-        else
-            echo -e "  ${GREEN}✓${NC} dnsmasq installed"
-        fi
-
-        # Check 2: dnsmasq config exists
-        if [ -f /etc/dnsmasq.d/laravel-dev.conf ]; then
-            echo -e "  ${GREEN}✓${NC} dnsmasq config exists"
-
-            if [ "$verbose" = true ]; then
-                echo -e "    ${DIM}$(cat /etc/dnsmasq.d/laravel-dev.conf | grep "address=" | head -2)${NC}"
+        # Check 1: NetworkManager available (Linux) or dnsmasq (macOS)
+        if [ "$is_macos" = true ]; then
+            if command -v dnsmasq &> /dev/null; then
+                echo -e "  ${GREEN}✓${NC} dnsmasq installed"
+            else
+                echo -e "  ${RED}✗${NC} dnsmasq not installed"
+                dns_issues+=("install_dnsmasq")
+                inc_issues
             fi
         else
-            echo -e "  ${RED}✗${NC} dnsmasq config missing (/etc/dnsmasq.d/laravel-dev.conf)"
-            dns_issues+=("create_dnsmasq_config")
-            inc_issues
-        fi
-
-        # Check 3: dnsmasq service running
-        if systemctl is-active --quiet dnsmasq 2>/dev/null; then
-            echo -e "  ${GREEN}✓${NC} dnsmasq service running"
-        elif pgrep -x dnsmasq > /dev/null 2>&1; then
-            echo -e "  ${GREEN}✓${NC} dnsmasq process running"
-        else
-            echo -e "  ${RED}✗${NC} dnsmasq not running"
-            dns_issues+=("start_dnsmasq")
-            inc_issues
-        fi
-
-        # Check 4: dnsmasq responds on 127.0.0.1
-        if dig +short test.test @127.0.0.1 2>/dev/null | grep -q "127.0.0.1"; then
-            echo -e "  ${GREEN}✓${NC} dnsmasq responds correctly (dig @127.0.0.1)"
-        else
-            echo -e "  ${RED}✗${NC} dnsmasq not responding on 127.0.0.1"
-            dns_issues+=("dnsmasq_not_responding")
-            inc_issues
-        fi
-
-        # Check 5: systemd-resolved routing (Linux only)
-        if [ -f /run/systemd/resolve/resolv.conf ]; then
-            if [ -f /etc/systemd/resolved.conf.d/docker-local.conf ]; then
-                echo -e "  ${GREEN}✓${NC} systemd-resolved drop-in exists"
-
-                if [ "$verbose" = true ]; then
-                    echo -e "    ${DIM}$(grep -E "^(DNS|Domains)" /etc/systemd/resolved.conf.d/docker-local.conf 2>/dev/null)${NC}"
-                fi
+            if command -v nmcli &> /dev/null; then
+                echo -e "  ${GREEN}✓${NC} NetworkManager available"
             else
-                echo -e "  ${RED}✗${NC} systemd-resolved drop-in missing"
-                echo -e "    ${DIM}This routes .test domains to dnsmasq${NC}"
-                dns_issues+=("create_resolved_dropin")
+                echo -e "  ${RED}✗${NC} NetworkManager not installed"
+                dns_issues+=("install_networkmanager")
                 inc_issues
             fi
         fi
 
-        # Check 6: Actual resolution test
-        if ping -c 1 -W 1 test.test > /dev/null 2>&1; then
+        # Check 2: dnsmasq config exists (different paths for Linux/macOS)
+        local config_found=false
+        local config_path=""
+        if [ -f /etc/NetworkManager/dnsmasq.d/docker-local.conf ]; then
+            config_found=true
+            config_path="/etc/NetworkManager/dnsmasq.d/docker-local.conf"
+            echo -e "  ${GREEN}✓${NC} dnsmasq config exists (NetworkManager)"
+        elif [ -f "${HOMEBREW_PREFIX:-/usr/local}/etc/dnsmasq.d/docker-local.conf" ]; then
+            config_found=true
+            config_path="${HOMEBREW_PREFIX:-/usr/local}/etc/dnsmasq.d/docker-local.conf"
+            echo -e "  ${GREEN}✓${NC} dnsmasq config exists (macOS)"
+        elif [ -f /etc/dnsmasq.d/laravel-dev.conf ]; then
+            config_found=true
+            config_path="/etc/dnsmasq.d/laravel-dev.conf"
+            echo -e "  ${YELLOW}⚠${NC} dnsmasq config exists (legacy path)"
+            echo -e "    ${DIM}Run setup:dns to upgrade to NetworkManager integration${NC}"
+        fi
+
+        if [ "$config_found" = true ]; then
+            if [ "$verbose" = true ]; then
+                echo -e "    ${DIM}$(grep "address=" "$config_path" 2>/dev/null | head -2)${NC}"
+            fi
+        else
+            echo -e "  ${RED}✗${NC} dnsmasq config missing"
+            dns_issues+=("create_dnsmasq_config")
+            inc_issues
+        fi
+
+        # Check 3: dnsmasq running (via NetworkManager or standalone)
+        if [ "$is_macos" = false ]; then
+            # Linux: Check NetworkManager's dnsmasq
+            if [ -f /etc/NetworkManager/conf.d/docker-local-dns.conf ]; then
+                echo -e "  ${GREEN}✓${NC} NetworkManager dns=dnsmasq enabled"
+
+                if pgrep -f "dnsmasq.*NetworkManager" > /dev/null 2>&1; then
+                    echo -e "  ${GREEN}✓${NC} NetworkManager's dnsmasq running"
+                elif pgrep -x dnsmasq > /dev/null 2>&1; then
+                    echo -e "  ${GREEN}✓${NC} dnsmasq process running"
+                else
+                    echo -e "  ${YELLOW}⚠${NC} dnsmasq may not be running"
+                    echo -e "    ${DIM}Try: sudo systemctl restart NetworkManager${NC}"
+                    dns_issues+=("restart_networkmanager")
+                fi
+            else
+                echo -e "  ${RED}✗${NC} NetworkManager dns=dnsmasq not configured"
+                dns_issues+=("configure_nm_dnsmasq")
+                inc_issues
+            fi
+        else
+            # macOS: Check standalone dnsmasq
+            if pgrep -x dnsmasq > /dev/null 2>&1; then
+                echo -e "  ${GREEN}✓${NC} dnsmasq running"
+            else
+                echo -e "  ${RED}✗${NC} dnsmasq not running"
+                dns_issues+=("start_dnsmasq")
+                inc_issues
+            fi
+        fi
+
+        # Check 4: /etc/resolv.conf points to NetworkManager (Linux only)
+        if [ "$is_macos" = false ] && [ -L /etc/resolv.conf ]; then
+            local resolv_target=$(readlink -f /etc/resolv.conf 2>/dev/null || echo "")
+            if [[ "$resolv_target" == *"NetworkManager"* ]]; then
+                echo -e "  ${GREEN}✓${NC} /etc/resolv.conf points to NetworkManager"
+            else
+                echo -e "  ${YELLOW}⚠${NC} /etc/resolv.conf not pointing to NetworkManager"
+                echo -e "    ${DIM}Current: $resolv_target${NC}"
+                dns_issues+=("fix_resolv_conf")
+            fi
+        fi
+
+        # Check 5: Actual resolution test
+        if ping -c 1 -W 2 test.test > /dev/null 2>&1; then
             echo -e "  ${GREEN}✓${NC} *.test resolving correctly"
         else
             echo -e "  ${RED}✗${NC} *.test NOT resolving"
@@ -2261,19 +2310,9 @@ cmd_fix() {
 
             local dnsmasq_dns=$(dig +short test.test @127.0.0.1 2>/dev/null)
             if [ -z "$dnsmasq_dns" ]; then
-                echo -e "    ${DIM}• dnsmasq returns nothing (may not be running)${NC}"
+                echo -e "    ${DIM}• dnsmasq @127.0.0.1 returns nothing${NC}"
             else
-                echo -e "    ${DIM}• dnsmasq returns: $dnsmasq_dns${NC}"
-            fi
-
-            # Check if systemd-resolved is using correct DNS for .test
-            if command -v resolvectl &> /dev/null; then
-                local resolved_status=$(resolvectl query test.test 2>&1)
-                if echo "$resolved_status" | grep -q "127.0.0.1"; then
-                    echo -e "    ${DIM}• resolvectl correctly routes to 127.0.0.1${NC}"
-                else
-                    echo -e "    ${DIM}• resolvectl NOT routing .test to local DNS${NC}"
-                fi
+                echo -e "    ${DIM}• dnsmasq @127.0.0.1 returns: $dnsmasq_dns${NC}"
             fi
 
             dns_issues+=("resolution_failed")
@@ -2284,16 +2323,34 @@ cmd_fix() {
             echo ""
             echo -e "  ${WHITE}Fixes needed:${NC}"
 
+            # Deduplicate and show appropriate fix
+            local needs_setup_dns=false
             for issue in "${dns_issues[@]}"; do
                 case "$issue" in
                     install_dnsmasq)
-                        sudo_required+=("sudo apt install -y dnsmasq")
+                        if [ "$is_macos" = true ]; then
+                            echo -e "    ${DIM}• brew install dnsmasq${NC}"
+                        fi
+                        needs_setup_dns=true
                         ;;
-                    create_dnsmasq_config|create_resolved_dropin|start_dnsmasq|dnsmasq_not_responding|resolution_failed)
-                        sudo_required+=("sudo \"\$(which docker-local)\" setup:dns")
+                    install_networkmanager)
+                        echo -e "    ${DIM}• Install NetworkManager for your distribution${NC}"
+                        ;;
+                    create_dnsmasq_config|configure_nm_dnsmasq|fix_resolv_conf|restart_networkmanager|resolution_failed)
+                        needs_setup_dns=true
+                        ;;
+                    start_dnsmasq)
+                        if [ "$is_macos" = true ]; then
+                            echo -e "    ${DIM}• brew services start dnsmasq${NC}"
+                        fi
+                        needs_setup_dns=true
                         ;;
                 esac
             done
+
+            if [ "$needs_setup_dns" = true ]; then
+                sudo_required+=("sudo \"\$(which docker-local)\" setup:dns")
+            fi
         fi
         echo ""
     fi
@@ -2387,7 +2444,7 @@ _docker_local_completions() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
     
-    local commands="init doctor up down restart status logs update clean list make:laravel clone open ide env:check make:env update:env tinker test require logs:laravel new:model new:controller new:migration new:seeder new:factory new:request new:resource new:middleware new:event new:job new:mail new:command db:mysql db:postgres db:redis db:create db:dump db:restore db:fresh queue:work queue:restart queue:failed queue:retry queue:clear xdebug shell config completion self-update help setup:hosts setup:dns"
+    local commands="init doctor up down restart status logs update clean list make:laravel clone open ide env:check make:env update:env tinker test require logs:laravel new:model new:controller new:migration new:seeder new:factory new:request new:resource new:middleware new:event new:job new:mail new:command db:mysql db:postgres db:redis db:create db:dump db:restore db:fresh queue:work queue:restart queue:failed queue:retry queue:clear xdebug shell config completion self-update help setup:hosts setup:dns setup:system"
     
     case "$prev" in
         open)
@@ -4024,6 +4081,45 @@ cmd_setup_hosts() {
     bash "$PACKAGE_DIR/scripts/setup-hosts.sh"
 }
 
+cmd_setup_system() {
+    check_sudo "setup:system"
+    check_docker_env
+
+    echo -e "${BLUE}"
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║           Complete System Setup for docker-local              ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo ""
+    echo -e "${WHITE}This will configure both /etc/hosts and wildcard DNS.${NC}"
+    echo ""
+
+    # Run setup:hosts
+    echo -e "${BLUE}[1/2] Setting up /etc/hosts...${NC}"
+    echo ""
+    bash "$PACKAGE_DIR/scripts/setup-hosts.sh"
+
+    echo ""
+    echo -e "${BLUE}[2/2] Setting up wildcard DNS (*.test)...${NC}"
+    echo ""
+    bash "$PACKAGE_DIR/scripts/setup-dns.sh"
+
+    echo ""
+    echo -e "${GREEN}"
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║              System Setup Complete!                           ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo ""
+    echo -e "Your system is now configured for docker-local development."
+    echo ""
+    echo -e "${CYAN}Next steps:${NC}"
+    echo -e "  • Run ${WHITE}docker-local up${NC} to start services"
+    echo -e "  • Run ${WHITE}docker-local new myproject${NC} to create a project"
+    echo -e "  • Run ${WHITE}docker-local doctor${NC} to verify setup"
+    echo ""
+}
+
 cmd_ssl_status() {
     bash "$PACKAGE_DIR/scripts/ssl-status.sh"
 }
@@ -4412,6 +4508,7 @@ case "$1" in
     setup) shift; cmd_setup "$@" ;;
     setup:dns) shift; cmd_setup_dns "$@" ;;
     setup:hosts) cmd_setup_hosts ;;
+    setup:system) cmd_setup_system ;;
     ssl:status) cmd_ssl_status ;;
     ssl:regenerate) cmd_ssl_regenerate ;;
 
