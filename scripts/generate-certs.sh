@@ -32,10 +32,50 @@ if ! command -v mkcert &> /dev/null; then
     fi
 fi
 
-# Instalar CA raiz
+# Additional colors
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+
+# Install CA root
 mkcert -install
 
-# Criar diretório de certificados
+# Fix NSS trust flags for Chrome/Chromium
+# mkcert -install sometimes sets trust flags to C,, instead of CT,C,C
+# The 'T' flag is required for SSL/TLS server authentication
+fix_nss_trust() {
+    local NSS_DB="$HOME/.pki/nssdb"
+
+    if [ -d "$NSS_DB" ] && command -v certutil &> /dev/null; then
+        # Get the CA name from NSS database
+        local CA_NAME=$(certutil -L -d "sql:$NSS_DB" 2>/dev/null | grep -i "mkcert" | sed 's/\s*[A-Z,]*$//' | sed 's/\s*$//')
+
+        if [ -n "$CA_NAME" ]; then
+            local TRUST_FLAGS=$(certutil -L -d "sql:$NSS_DB" 2>/dev/null | grep -i "mkcert" | awk '{print $NF}')
+
+            # Check if trust flags are missing 'T' for SSL
+            if ! echo "$TRUST_FLAGS" | grep -q "CT"; then
+                echo -e "${YELLOW}→ Fixing NSS trust flags for Chrome/Chromium...${NC}"
+
+                # Get the CA root path
+                local CA_ROOT=$(mkcert -CAROOT 2>/dev/null)
+
+                if [ -f "$CA_ROOT/rootCA.pem" ]; then
+                    # Remove old entry and add with correct trust flags
+                    certutil -D -d "sql:$NSS_DB" -n "$CA_NAME" 2>/dev/null || true
+                    certutil -A -d "sql:$NSS_DB" -n "$CA_NAME" -t "CT,C,C" -i "$CA_ROOT/rootCA.pem"
+                    echo -e "${GREEN}✓ NSS trust flags fixed (CT,C,C)${NC}"
+                    echo -e "${DIM}  Restart your browser for changes to take effect${NC}"
+                fi
+            else
+                echo -e "${GREEN}✓ NSS trust flags already correct ($TRUST_FLAGS)${NC}"
+            fi
+        fi
+    fi
+}
+
+fix_nss_trust
+
+# Create certificates directory
 mkdir -p "$CERTS_DIR"
 
 # Gerar certificado para *.localhost

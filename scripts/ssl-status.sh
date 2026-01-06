@@ -12,6 +12,10 @@ PACKAGE_DIR="$(dirname "$SCRIPT_DIR")"
 # Source configuration
 source "$PACKAGE_DIR/lib/config.sh"
 
+# Additional colors not in config.sh
+CYAN='\033[0;36m'
+WHITE='\033[1;37m'
+
 CERTS_DIR="$CONFIG_DIR/certs"
 
 echo -e "${BLUE}"
@@ -111,6 +115,52 @@ if [ -f "$COMPOSE_FILE" ]; then
     fi
 else
     echo -e "  ${YELLOW}○${NC} Could not check docker-compose configuration"
+fi
+echo ""
+
+# Check browser trust (NSS database for Chrome/Chromium)
+echo -e "${WHITE}Browser Trust (NSS Database):${NC}"
+NSS_DB="$HOME/.pki/nssdb"
+NSS_TRUST_OK=true
+
+if [ -d "$NSS_DB" ] && command -v certutil &> /dev/null; then
+    # Get the CA name from mkcert
+    CA_NAME=$(certutil -L -d "sql:$NSS_DB" 2>/dev/null | grep -i "mkcert" | sed 's/\s*[A-Z,]*$//' | sed 's/\s*$//')
+
+    if [ -n "$CA_NAME" ]; then
+        # Get trust flags
+        TRUST_FLAGS=$(certutil -L -d "sql:$NSS_DB" 2>/dev/null | grep -i "mkcert" | awk '{print $NF}')
+
+        # Check if trust flags include 'T' for SSL (should be CT,, or CT,C,C)
+        if echo "$TRUST_FLAGS" | grep -q "CT"; then
+            echo -e "  ${GREEN}✓${NC} CA trusted for SSL in Chrome/Chromium"
+            echo -e "      ${DIM}Trust flags: $TRUST_FLAGS${NC}"
+        else
+            echo -e "  ${RED}✗${NC} CA NOT trusted for SSL (flags: $TRUST_FLAGS)"
+            echo -e "      ${DIM}Expected: CT,C,C or CT,, (T = trusted for SSL)${NC}"
+            echo ""
+            echo -e "  ${YELLOW}This is why your browser shows 'Not Secure'!${NC}"
+            echo ""
+            echo -e "  ${WHITE}To fix, run:${NC}"
+            echo -e "    ${CYAN}docker-local ssl:regenerate${NC}"
+            echo ""
+            echo -e "  ${DIM}Or manually fix with:${NC}"
+            echo -e "    ${DIM}certutil -D -d sql:\$HOME/.pki/nssdb -n \"$CA_NAME\"${NC}"
+            echo -e "    ${DIM}certutil -A -d sql:\$HOME/.pki/nssdb -n \"$CA_NAME\" -t \"CT,C,C\" -i \"\$(mkcert -CAROOT)/rootCA.pem\"${NC}"
+            NSS_TRUST_OK=false
+        fi
+    else
+        echo -e "  ${YELLOW}○${NC} mkcert CA not found in NSS database"
+        echo -e "      ${DIM}Run: ${CYAN}docker-local ssl:regenerate${NC}"
+        NSS_TRUST_OK=false
+    fi
+else
+    if [ ! -d "$NSS_DB" ]; then
+        echo -e "  ${YELLOW}○${NC} NSS database not found at $NSS_DB"
+    fi
+    if ! command -v certutil &> /dev/null; then
+        echo -e "  ${YELLOW}○${NC} certutil not installed (install libnss3-tools)"
+    fi
 fi
 echo ""
 
