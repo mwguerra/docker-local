@@ -179,9 +179,110 @@ check_docker_env() {
     fi
 }
 
+# Diagnose Docker connectivity issues and return specific error codes:
+# 0 = Docker is accessible
+# 1 = Docker not installed
+# 2 = Docker daemon not running
+# 3 = Permission denied (user not in docker group)
+# 4 = Unknown error
+diagnose_docker() {
+    # Check if docker command exists
+    if ! command -v docker &> /dev/null; then
+        return 1
+    fi
+
+    # Try to get docker info and capture stderr
+    local docker_output
+    docker_output=$(docker info 2>&1)
+    local exit_code=$?
+
+    if [ $exit_code -eq 0 ]; then
+        return 0
+    fi
+
+    # Check for permission denied
+    if echo "$docker_output" | grep -qi "permission denied"; then
+        return 3
+    fi
+
+    # Check for connection refused / daemon not running
+    if echo "$docker_output" | grep -qiE "cannot connect|connection refused|Is the docker daemon running|docker daemon.*not running"; then
+        return 2
+    fi
+
+    # Unknown error
+    return 4
+}
+
+# Show detailed Docker error with instructions
+show_docker_error() {
+    local error_code=$1
+    local context=${2:-""}  # Optional context like "init" or "up"
+
+    echo ""
+    case $error_code in
+        1)
+            echo -e "${RED}Error: Docker is not installed${NC}"
+            echo ""
+            echo -e "${WHITE}To install Docker:${NC}"
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                echo -e "  ${CYAN}brew install --cask docker${NC}"
+                echo -e "  Then open Docker Desktop from Applications"
+            else
+                echo -e "  ${CYAN}curl -fsSL https://get.docker.com | sh${NC}"
+                echo ""
+                echo -e "  Or follow the official guide:"
+                echo -e "  ${DIM}https://docs.docker.com/engine/install/${NC}"
+            fi
+            ;;
+        2)
+            echo -e "${RED}Error: Docker daemon is not running${NC}"
+            echo ""
+            echo -e "${WHITE}To start Docker:${NC}"
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                echo -e "  Open ${CYAN}Docker Desktop${NC} from Applications"
+            elif command -v systemctl &> /dev/null; then
+                echo -e "  ${CYAN}sudo systemctl start docker${NC}"
+                echo ""
+                echo -e "  To start Docker automatically on boot:"
+                echo -e "  ${CYAN}sudo systemctl enable docker${NC}"
+            else
+                echo -e "  ${CYAN}sudo dockerd${NC}"
+                echo -e "  Or start Docker Desktop if installed"
+            fi
+            ;;
+        3)
+            echo -e "${RED}Error: Permission denied accessing Docker${NC}"
+            echo ""
+            echo -e "${WHITE}Your user is not in the 'docker' group.${NC}"
+            echo ""
+            echo -e "${WHITE}To fix (recommended):${NC}"
+            echo -e "  ${CYAN}sudo usermod -aG docker \$USER${NC}"
+            echo ""
+            echo -e "  ${YELLOW}Important:${NC} You must ${WHITE}log out and log back in${NC} for this to take effect."
+            echo -e "  Alternatively, run: ${CYAN}newgrp docker${NC} to apply immediately in this terminal."
+            echo ""
+            echo -e "${WHITE}Quick workaround (not recommended for regular use):${NC}"
+            echo -e "  ${CYAN}sudo docker-local ${context}${NC}"
+            ;;
+        *)
+            echo -e "${RED}Error: Unable to connect to Docker${NC}"
+            echo ""
+            echo -e "Please check that Docker is installed and running."
+            echo ""
+            echo -e "Debug output:"
+            docker info 2>&1 | head -10
+            ;;
+    esac
+    echo ""
+}
+
 check_docker_running() {
-    if ! docker info > /dev/null 2>&1; then
-        echo -e "${RED}Error: Docker is not running${NC}"
+    diagnose_docker
+    local result=$?
+
+    if [ $result -ne 0 ]; then
+        show_docker_error $result "${BASH_ARGV[0]:-}"
         exit 1
     fi
 }
@@ -1633,29 +1734,59 @@ cmd_fix() {
     if [ -z "$category" ] || [ "$category" = "docker" ]; then
         echo -e "${WHITE}[Docker]${NC}"
 
-        # Check Docker daemon
-        if ! docker info > /dev/null 2>&1; then
-            echo -e "  ${RED}✗${NC} Docker daemon not running"
+        # Check Docker daemon with improved diagnostics
+        diagnose_docker
+        local docker_status=$?
+
+        if [ $docker_status -ne 0 ]; then
+            case $docker_status in
+                1) echo -e "  ${RED}✗${NC} Docker is not installed" ;;
+                2) echo -e "  ${RED}✗${NC} Docker daemon not running" ;;
+                3) echo -e "  ${RED}✗${NC} Permission denied accessing Docker" ;;
+                *) echo -e "  ${RED}✗${NC} Docker connection error" ;;
+            esac
             inc_issues
 
             if [ "$dry_run" = false ]; then
-                echo -e "  ${BLUE}→${NC} Attempting to start Docker..."
-                if systemctl is-active --quiet docker 2>/dev/null; then
-                    echo -e "  ${YELLOW}⚠${NC} Docker service exists but daemon not responding"
-                    echo -e "    ${DIM}Try: sudo systemctl restart docker${NC}"
-                elif command -v systemctl &> /dev/null; then
-                    if sudo -n systemctl start docker 2>/dev/null; then
-                        sleep 2
-                        if docker info > /dev/null 2>&1; then
-                            echo -e "  ${GREEN}✓${NC} Docker started successfully"
-                            inc_fixed
+                case $docker_status in
+                    1)
+                        # Docker not installed
+                        if [[ "$OSTYPE" == "darwin"* ]]; then
+                            echo -e "    ${DIM}Install: brew install --cask docker${NC}"
+                        else
+                            echo -e "    ${DIM}Install: curl -fsSL https://get.docker.com | sh${NC}"
                         fi
-                    else
-                        sudo_required+=("sudo systemctl start docker")
-                    fi
-                else
-                    echo -e "    ${DIM}Start Docker Desktop or run: sudo dockerd${NC}"
-                fi
+                        ;;
+                    2)
+                        # Docker not running - try to start
+                        echo -e "  ${BLUE}→${NC} Attempting to start Docker..."
+                        if systemctl is-active --quiet docker 2>/dev/null; then
+                            echo -e "  ${YELLOW}⚠${NC} Docker service exists but daemon not responding"
+                            echo -e "    ${DIM}Try: sudo systemctl restart docker${NC}"
+                        elif command -v systemctl &> /dev/null; then
+                            if sudo -n systemctl start docker 2>/dev/null; then
+                                sleep 2
+                                if docker info > /dev/null 2>&1; then
+                                    echo -e "  ${GREEN}✓${NC} Docker started successfully"
+                                    inc_fixed
+                                fi
+                            else
+                                sudo_required+=("sudo systemctl start docker")
+                            fi
+                        else
+                            echo -e "    ${DIM}Start Docker Desktop or run: sudo dockerd${NC}"
+                        fi
+                        ;;
+                    3)
+                        # Permission denied
+                        echo -e "    ${DIM}Your user is not in the 'docker' group${NC}"
+                        echo -e "    ${DIM}Fix: sudo usermod -aG docker \$USER${NC}"
+                        echo -e "    ${DIM}Then log out and back in (or run: newgrp docker)${NC}"
+                        ;;
+                    *)
+                        echo -e "    ${DIM}Check Docker installation and configuration${NC}"
+                        ;;
+                esac
             fi
         else
             echo -e "  ${GREEN}✓${NC} Docker daemon running"
@@ -2091,9 +2222,12 @@ cmd_init() {
 
     # Step 1: Check Docker
     echo -e "${BLUE}[1/7] Checking Docker...${NC}"
-    if ! docker info > /dev/null 2>&1; then
-        echo -e "${RED}  ✗ Docker is not running${NC}"
-        echo -e "  Please start Docker and run ${CYAN}docker-local init${NC} again"
+    diagnose_docker
+    local docker_status=$?
+    if [ $docker_status -ne 0 ]; then
+        echo -e "${RED}  ✗ Docker is not accessible${NC}"
+        show_docker_error $docker_status "init"
+        echo -e "  Please fix the issue above and run ${CYAN}docker-local init${NC} again"
         exit 1
     fi
     echo -e "${GREEN}  ✓ Docker is running${NC}"
