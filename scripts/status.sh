@@ -70,8 +70,7 @@ check_service "PostgreSQL" "postgres" "17"
 check_service "Redis" "redis" "8"
 check_service "Mailpit" "mailpit" "latest"
 check_service "MinIO" "minio" "latest"
-# Reverb is a profile-based service (requires explicit enablement)
-check_profile_service "Reverb" "reverb" "WS"
+check_service "Reverb" "reverb" "WS"
 
 echo ""
 echo -e "${YELLOW}Versões Detalhadas:${NC}"
@@ -152,16 +151,16 @@ else
     echo -e "${RED}✗ Falha na conexão${NC}"
 fi
 
-# Testar Reverb WebSocket (profile-based service)
+# Testar Reverb WebSocket
 printf "  Reverb:     "
 if docker ps --format '{{.Names}}' | grep -q "^reverb$"; then
-    if docker exec reverb php -r "@fsockopen('127.0.0.1', 8080)" > /dev/null 2>&1; then
+    if timeout 2 bash -c '</dev/tcp/127.0.0.1/8080' 2>/dev/null; then
         echo -e "${GREEN}✓ Conectado${NC} (reverb:8080)"
     else
         echo -e "${YELLOW}○ Starting${NC} (reverb:8080)"
     fi
 else
-    echo -e "${DIM}○ Not configured${NC} (use: docker-local reverb:start)"
+    echo -e "${RED}✗ Não disponível${NC}"
 fi
 
 echo ""

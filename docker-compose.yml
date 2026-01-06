@@ -398,10 +398,10 @@ services:
       - "traefik.http.services.whisper.loadbalancer.server.port=8000"
 
   # ============================================================================
-  # Laravel Reverb - WebSocket Server
-  # Real-time WebSocket communication for Laravel applications
+  # Laravel Reverb - Standalone WebSocket Server (Multi-App Support)
+  # Serves all projects simultaneously - each connects with own credentials
+  # Apps managed via: docker-local reverb app:add/list/remove
   # Documentation: https://laravel.com/docs/reverb
-  # Enable with: docker-local reverb:start <project-name>
   # ============================================================================
   reverb:
     build:
@@ -413,32 +413,41 @@ services:
         - GID=${DOCKER_GID:-1000}
     container_name: reverb
     restart: unless-stopped
-    profiles:
-      - reverb
-    working_dir: /var/www/${REVERB_PROJECT_NAME:-myapp}
+    working_dir: /app
     volumes:
-      - ${PROJECTS_PATH:-../projects}:/var/www:cached
+      - ./reverb-server:/app:cached
+      - reverb_vendor:/app/vendor
+      - ${DOCKER_LOCAL_CONFIG_DIR:-~/.config/docker-local}/reverb-apps.json:/data/apps.json:ro
     ports:
       - "${REVERB_PORT:-8080}:8080"
     environment:
-      - REVERB_APP_ID=${REVERB_APP_ID:-my-app-id}
-      - REVERB_APP_KEY=${REVERB_APP_KEY:-my-app-key}
-      - REVERB_APP_SECRET=${REVERB_APP_SECRET:-my-app-secret}
       - REVERB_SERVER_HOST=0.0.0.0
       - REVERB_SERVER_PORT=8080
+      - REVERB_HOST=ws.localhost
+      - REVERB_APPS_FILE=/data/apps.json
       - REVERB_SCALING_ENABLED=${REVERB_SCALING_ENABLED:-false}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     networks:
       - laravel-dev
     depends_on:
       redis:
         condition: service_healthy
-    command: php artisan reverb:start --host=0.0.0.0 --port=8080
+    command: >
+      sh -c "
+        if [ ! -f /app/vendor/autoload.php ]; then
+          echo 'Installing Reverb server dependencies...'
+          composer install --no-dev --optimize-autoloader --no-interaction
+        fi
+        echo 'Starting Reverb WebSocket server...'
+        php artisan reverb:start --host=0.0.0.0 --port=8080
+      "
     healthcheck:
       test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/127.0.0.1/8080' || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 30s
+      start_period: 60s
     labels:
       - "traefik.enable=true"
       # WebSocket route for wss://ws.localhost
@@ -468,3 +477,5 @@ volumes:
     name: laravel-dev-rtmp-recordings
   whisper_cache:
     name: laravel-dev-whisper-cache
+  reverb_vendor:
+    name: laravel-dev-reverb-vendor
