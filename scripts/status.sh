@@ -13,8 +13,9 @@ source "$PACKAGE_DIR/lib/config.sh"
 # Load environment to get port configurations
 load_env
 
-# Additional color
+# Additional colors
 CYAN='\033[0;36m'
+DIM='\033[2m'
 
 echo -e "${BLUE}"
 echo "╔═══════════════════════════════════════════════════════════════╗"
@@ -28,14 +29,32 @@ check_service() {
     local name=$1
     local container=$2
     local version=$3
-    
+
     printf "%-18s" "$name ($version):"
-    
+
     if docker ps --format '{{.Names}}' | grep -q "^$container$"; then
         echo -e "${GREEN}● Running${NC}"
         return 0
     else
         echo -e "${RED}○ Stopped${NC}"
+        return 1
+    fi
+}
+
+# Função para verificar serviço baseado em profile (opcional)
+check_profile_service() {
+    local name=$1
+    local container=$2
+    local version=$3
+
+    printf "%-18s" "$name ($version):"
+
+    if docker ps --format '{{.Names}}' | grep -q "^$container$"; then
+        echo -e "${GREEN}● Running${NC}"
+        return 0
+    else
+        # Profile-based services show as "Not configured" instead of "Stopped"
+        echo -e "${DIM}○ Not configured${NC}"
         return 1
     fi
 }
@@ -51,7 +70,8 @@ check_service "PostgreSQL" "postgres" "17"
 check_service "Redis" "redis" "8"
 check_service "Mailpit" "mailpit" "latest"
 check_service "MinIO" "minio" "latest"
-check_service "Reverb" "reverb" "WS"
+# Reverb is a profile-based service (requires explicit enablement)
+check_profile_service "Reverb" "reverb" "WS"
 
 echo ""
 echo -e "${YELLOW}Versões Detalhadas:${NC}"
@@ -132,7 +152,7 @@ else
     echo -e "${RED}✗ Falha na conexão${NC}"
 fi
 
-# Testar Reverb WebSocket
+# Testar Reverb WebSocket (profile-based service)
 printf "  Reverb:     "
 if docker ps --format '{{.Names}}' | grep -q "^reverb$"; then
     if docker exec reverb php -r "@fsockopen('127.0.0.1', 8080)" > /dev/null 2>&1; then
@@ -141,7 +161,7 @@ if docker ps --format '{{.Names}}' | grep -q "^reverb$"; then
         echo -e "${YELLOW}○ Starting${NC} (reverb:8080)"
     fi
 else
-    echo -e "${RED}✗ Não disponível${NC}"
+    echo -e "${DIM}○ Not configured${NC} (use: docker-local reverb:start)"
 fi
 
 echo ""

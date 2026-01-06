@@ -401,6 +401,7 @@ services:
   # Laravel Reverb - WebSocket Server
   # Real-time WebSocket communication for Laravel applications
   # Documentation: https://laravel.com/docs/reverb
+  # Enable with: docker-local reverb:start <project-name>
   # ============================================================================
   reverb:
     build:
@@ -412,6 +413,8 @@ services:
         - GID=${DOCKER_GID:-1000}
     container_name: reverb
     restart: unless-stopped
+    profiles:
+      - reverb
     working_dir: /var/www/${REVERB_PROJECT_NAME:-myapp}
     volumes:
       - ${PROJECTS_PATH:-../projects}:/var/www:cached

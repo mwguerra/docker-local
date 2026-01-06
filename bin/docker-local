@@ -1384,6 +1384,169 @@ cmd_queue_clear() {
 }
 
 # ==============================================================================
+# REVERB - WebSocket Server
+# ==============================================================================
+
+cmd_reverb() {
+    local action="${1:-status}"
+    shift 2>/dev/null || true
+
+    case "$action" in
+        start)
+            cmd_reverb_start "$@"
+            ;;
+        stop)
+            cmd_reverb_stop
+            ;;
+        restart)
+            cmd_reverb_stop
+            cmd_reverb_start "$@"
+            ;;
+        status)
+            cmd_reverb_status
+            ;;
+        logs)
+            docker logs -f reverb 2>&1
+            ;;
+        *)
+            echo -e "${WHITE}Reverb Commands:${NC}"
+            echo ""
+            echo "  ${CYAN}reverb start <project>${NC}  - Start Reverb for a project"
+            echo "  ${CYAN}reverb stop${NC}             - Stop Reverb"
+            echo "  ${CYAN}reverb restart <project>${NC} - Restart Reverb"
+            echo "  ${CYAN}reverb status${NC}           - Show Reverb status"
+            echo "  ${CYAN}reverb logs${NC}             - Show Reverb logs"
+            echo ""
+            echo -e "${DIM}Example: docker-local reverb start myapp${NC}"
+            ;;
+    esac
+}
+
+cmd_reverb_start() {
+    local project_name="$1"
+
+    if [ -z "$project_name" ]; then
+        echo -e "${RED}Error: Project name is required${NC}"
+        echo ""
+        echo "Usage: docker-local reverb start <project-name>"
+        echo ""
+        echo "The project must have Laravel Reverb installed."
+        echo "To install Reverb in your project:"
+        echo "  ${CYAN}docker-local artisan install:broadcasting${NC}"
+        exit 1
+    fi
+
+    # Verify project exists
+    local project_path="$PROJECTS_DIR/$project_name"
+    if [ ! -d "$project_path" ]; then
+        echo -e "${RED}Error: Project '$project_name' not found in $PROJECTS_DIR${NC}"
+        exit 1
+    fi
+
+    # Check if artisan exists (Laravel project)
+    if [ ! -f "$project_path/artisan" ]; then
+        echo -e "${RED}Error: '$project_name' does not appear to be a Laravel project${NC}"
+        exit 1
+    fi
+
+    # Check if Reverb is already running
+    if docker ps --format '{{.Names}}' | grep -q "^reverb$"; then
+        echo -e "${YELLOW}Reverb is already running.${NC}"
+        echo "Use ${CYAN}docker-local reverb restart $project_name${NC} to restart."
+        exit 0
+    fi
+
+    echo -e "${BLUE}Starting Reverb for project: $project_name${NC}"
+
+    # Export the project name for docker-compose
+    export REVERB_PROJECT_NAME="$project_name"
+
+    # Start reverb with the profile
+    docker_compose --profile reverb up -d reverb
+
+    # Wait for container to be healthy
+    echo -e "${YELLOW}Waiting for Reverb to start...${NC}"
+    local max_attempts=30
+    local attempt=0
+    while [ $attempt -lt $max_attempts ]; do
+        if docker ps --format '{{.Names}}' | grep -q "^reverb$"; then
+            local status=$(docker inspect --format='{{.State.Health.Status}}' reverb 2>/dev/null || echo "unknown")
+            if [ "$status" = "healthy" ]; then
+                echo -e "${GREEN}✓ Reverb is running${NC}"
+                echo ""
+                echo "  WebSocket URL: ${CYAN}wss://ws.localhost${NC}"
+                echo "  Local port:    ${CYAN}localhost:8080${NC}"
+                echo ""
+                echo -e "${DIM}Tip: Use 'docker-local reverb logs' to view logs${NC}"
+                return 0
+            elif [ "$status" = "unhealthy" ]; then
+                echo -e "${RED}✗ Reverb failed to start${NC}"
+                echo ""
+                echo "Check the logs:"
+                echo "  ${CYAN}docker-local reverb logs${NC}"
+                echo ""
+                echo "Make sure Reverb is installed in your project:"
+                echo "  ${CYAN}cd $project_path && php artisan install:broadcasting${NC}"
+                exit 1
+            fi
+        fi
+        sleep 1
+        attempt=$((attempt + 1))
+    done
+
+    # If we get here, container might be starting but not yet healthy
+    if docker ps --format '{{.Names}}' | grep -q "^reverb$"; then
+        echo -e "${GREEN}✓ Reverb container started${NC}"
+        echo ""
+        echo "  WebSocket URL: ${CYAN}wss://ws.localhost${NC}"
+        echo "  Local port:    ${CYAN}localhost:8080${NC}"
+    else
+        echo -e "${RED}✗ Reverb failed to start. Check logs:${NC}"
+        docker logs reverb 2>&1 | tail -20
+        exit 1
+    fi
+}
+
+cmd_reverb_stop() {
+    if ! docker ps --format '{{.Names}}' | grep -q "^reverb$"; then
+        echo -e "${YELLOW}Reverb is not running${NC}"
+        return 0
+    fi
+
+    echo -e "${BLUE}Stopping Reverb...${NC}"
+    docker stop reverb > /dev/null 2>&1
+    docker rm reverb > /dev/null 2>&1
+    echo -e "${GREEN}✓ Reverb stopped${NC}"
+}
+
+cmd_reverb_status() {
+    echo -e "${WHITE}Reverb Status:${NC}"
+    echo ""
+
+    if docker ps --format '{{.Names}}' | grep -q "^reverb$"; then
+        local status=$(docker inspect --format='{{.State.Health.Status}}' reverb 2>/dev/null || echo "running")
+        local project=$(docker inspect --format='{{range .Config.Env}}{{println .}}{{end}}' reverb 2>/dev/null | grep "^REVERB_PROJECT_NAME=" | cut -d'=' -f2 || echo "unknown")
+
+        if [ "$status" = "healthy" ]; then
+            echo -e "  Status:  ${GREEN}● Running (healthy)${NC}"
+        else
+            echo -e "  Status:  ${YELLOW}● Running ($status)${NC}"
+        fi
+
+        if [ -n "$project" ] && [ "$project" != "unknown" ]; then
+            echo -e "  Project: ${CYAN}$project${NC}"
+        fi
+        echo "  URL:     wss://ws.localhost"
+        echo "  Port:    localhost:8080"
+    else
+        echo -e "  Status:  ${DIM}○ Not running${NC}"
+        echo ""
+        echo -e "  Start with: ${CYAN}docker-local reverb start <project-name>${NC}"
+    fi
+    echo ""
+}
+
+# ==============================================================================
 # XDEBUG Toggle
 # ==============================================================================
 
@@ -4186,7 +4349,15 @@ case "$1" in
     queue:failed) cmd_queue_failed ;;
     queue:retry) shift; cmd_queue_retry "$@" ;;
     queue:clear) cmd_queue_clear ;;
-    
+
+    # Reverb (WebSocket)
+    reverb) shift; cmd_reverb "$@" ;;
+    reverb:start) shift; cmd_reverb_start "$@" ;;
+    reverb:stop) cmd_reverb_stop ;;
+    reverb:restart) shift; cmd_reverb_stop; cmd_reverb_start "$@" ;;
+    reverb:status) cmd_reverb_status ;;
+    reverb:logs) docker logs -f reverb 2>&1 ;;
+
     # Xdebug
     xdebug) shift; cmd_xdebug "$@" ;;
 
