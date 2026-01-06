@@ -192,9 +192,10 @@ diagnose_docker() {
     fi
 
     # Try to get docker info and capture stderr
+    # Use || true to prevent set -e from exiting on failure
     local docker_output
-    docker_output=$(docker info 2>&1)
-    local exit_code=$?
+    local exit_code=0
+    docker_output=$(docker info 2>&1) || exit_code=$?
 
     if [ $exit_code -eq 0 ]; then
         return 0
@@ -278,8 +279,8 @@ show_docker_error() {
 }
 
 check_docker_running() {
-    diagnose_docker
-    local result=$?
+    local result=0
+    diagnose_docker || result=$?
 
     if [ $result -ne 0 ]; then
         show_docker_error $result "${BASH_ARGV[0]:-}"
@@ -1735,8 +1736,8 @@ cmd_fix() {
         echo -e "${WHITE}[Docker]${NC}"
 
         # Check Docker daemon with improved diagnostics
-        diagnose_docker
-        local docker_status=$?
+        local docker_status=0
+        diagnose_docker || docker_status=$?
 
         if [ $docker_status -ne 0 ]; then
             case $docker_status in
@@ -2222,8 +2223,8 @@ cmd_init() {
 
     # Step 1: Check Docker
     echo -e "${BLUE}[1/7] Checking Docker...${NC}"
-    diagnose_docker
-    local docker_status=$?
+    local docker_status=0
+    diagnose_docker || docker_status=$?
     if [ $docker_status -ne 0 ]; then
         echo -e "${RED}  ✗ Docker is not accessible${NC}"
         show_docker_error $docker_status "init"
