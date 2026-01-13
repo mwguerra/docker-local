@@ -78,14 +78,15 @@ echo ""
 
 # PHP Version
 if docker ps --format '{{.Names}}' | grep -q "^php$"; then
-    PHP_VERSION=$(docker exec php php -v 2>/dev/null | head -1 | cut -d' ' -f2)
+    # Filter out JIT warnings that PHP 8.4+ may output and get clean version
+    PHP_VERSION=$(docker exec php php -r "echo PHP_VERSION;" 2>/dev/null | grep -v "^Warning:" | grep -v "^PHP Warning:" | tr -d '\n')
     printf "  PHP:        "
     echo -e "${CYAN}$PHP_VERSION${NC}"
-    
+
     # Verificar Xdebug
     XDEBUG=$(docker exec php php -m 2>/dev/null | grep -i xdebug)
     if [ -n "$XDEBUG" ]; then
-        XDEBUG_VERSION=$(docker exec php php -r "echo phpversion('xdebug');" 2>/dev/null)
+        XDEBUG_VERSION=$(docker exec php php -r "echo phpversion('xdebug');" 2>/dev/null | grep -v "^Warning:")
         printf "  Xdebug:     "
         echo -e "${GREEN}✓ Enabled ($XDEBUG_VERSION)${NC}"
     else

@@ -80,8 +80,8 @@ show_help() {
     echo -e "  ${GREEN}doctor${NC}                Full system health check"
     echo -e "  ${GREEN}fix${NC} [options]         Diagnose and auto-fix common issues"
     echo -e "  ${GREEN}setup:hosts${NC}           Add Docker hostnames to /etc/hosts ${DIM}(sudo)${NC}"
-    echo -e "  ${GREEN}setup:dns${NC}             Configure dnsmasq for *.test ${DIM}(sudo)${NC}"
-    echo -e "  ${GREEN}setup:system${NC}          Run both setup:hosts and setup:dns ${DIM}(sudo)${NC}"
+    echo -e "  ${GREEN}setup:dns${NC} [--wsl]     Configure dnsmasq for *.test ${DIM}(sudo)${NC}"
+    echo -e "  ${GREEN}setup:system${NC} [--wsl]  Complete system setup ${DIM}(sudo)${NC}"
     echo -e "  ${GREEN}ssl:status${NC}            Show SSL certificate status"
     echo -e "  ${GREEN}ssl:regenerate${NC}        Regenerate SSL certificates with mkcert"
     echo ""
@@ -298,6 +298,39 @@ check_sudo() {
         echo -e "  ${CYAN}sudo \"\$(which docker-local)\" $1${NC}"
         echo ""
         exit 1
+    fi
+}
+
+# Setup symlink in /usr/local/bin for easier sudo access
+# This allows "sudo docker-local" to work without "$(which docker-local)"
+setup_symlink() {
+    local target="/usr/local/bin/docker-local"
+    local source="$PACKAGE_DIR/bin/docker-local"
+
+    # Check if we're running as root
+    if [ "$EUID" -ne 0 ]; then
+        return 1
+    fi
+
+    # Check if symlink already exists and points to the right place
+    if [ -L "$target" ]; then
+        local current_target=$(readlink -f "$target" 2>/dev/null)
+        local expected_target=$(readlink -f "$source" 2>/dev/null)
+        if [ "$current_target" = "$expected_target" ]; then
+            echo -e "${GREEN}✓${NC} Symlink already configured"
+            return 0
+        fi
+    fi
+
+    # Create or update symlink
+    if [ -f "$source" ]; then
+        ln -sf "$source" "$target"
+        echo -e "${GREEN}✓${NC} Created symlink: $target → $source"
+        echo -e "  ${DIM}Now you can use: sudo docker-local <command>${NC}"
+        return 0
+    else
+        echo -e "${YELLOW}⚠${NC} Could not create symlink (source not found)"
+        return 1
     fi
 }
 
@@ -2733,32 +2766,42 @@ cmd_init() {
     echo -e "${GREEN}╚═══════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
+    local needs_symlink=false
     local needs_hosts=false
     local needs_dns=false
+
+    # Check if symlink exists
+    if [ ! -L /usr/local/bin/docker-local ]; then
+        needs_symlink=true
+    fi
 
     if ! grep -q "127.0.0.1.*mysql.*postgres.*redis" /etc/hosts 2>/dev/null; then
         needs_hosts=true
     fi
 
-    if [ ! -f /etc/dnsmasq.d/laravel-dev.conf ] 2>/dev/null; then
+    # Check for docker-local DNS config (either NetworkManager or WSL style)
+    if [ ! -f /etc/NetworkManager/dnsmasq.d/docker-local.conf ] && [ ! -f /etc/dnsmasq.d/docker-local.conf ]; then
         needs_dns=true
     fi
 
-    if [ "$needs_hosts" = true ] || [ "$needs_dns" = true ]; then
-        echo -e "${YELLOW}To complete setup, run these commands with sudo:${NC}"
+    if [ "$needs_symlink" = true ] || [ "$needs_hosts" = true ] || [ "$needs_dns" = true ]; then
+        echo -e "${YELLOW}To complete setup, run this command with sudo:${NC}"
         echo ""
-
+        echo -e "  ${CYAN}sudo \"\$(which docker-local)\" setup:system${NC}"
+        echo ""
+        echo -e "  ${DIM}This will:${NC}"
+        if [ "$needs_symlink" = true ]; then
+            echo -e "  ${DIM}  • Create symlink for easier sudo access${NC}"
+        fi
         if [ "$needs_hosts" = true ]; then
-            echo -e "  ${CYAN}sudo \"\$(which docker-local)\" setup:hosts${NC}"
-            echo -e "  ${DIM}  └─ Enables local PHP to connect to Docker services${NC}"
-            echo ""
+            echo -e "  ${DIM}  • Configure /etc/hosts for Docker services${NC}"
         fi
-
         if [ "$needs_dns" = true ]; then
-            echo -e "  ${CYAN}sudo \"\$(which docker-local)\" setup:dns${NC}"
-            echo -e "  ${DIM}  └─ Enables *.test domain resolution${NC}"
-            echo ""
+            echo -e "  ${DIM}  • Enable *.test domain resolution${NC}"
         fi
+        echo ""
+        echo -e "  ${DIM}On WSL2, add --wsl flag: sudo \"\$(which docker-local)\" setup:system --wsl${NC}"
+        echo ""
     else
         echo -e "${GREEN}✓ All configurations are complete!${NC}"
         echo ""
@@ -4091,18 +4134,23 @@ cmd_setup_system() {
     echo "╚═══════════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     echo ""
-    echo -e "${WHITE}This will configure both /etc/hosts and wildcard DNS.${NC}"
+    echo -e "${WHITE}This will configure symlink, /etc/hosts, and wildcard DNS.${NC}"
     echo ""
 
-    # Run setup:hosts
-    echo -e "${BLUE}[1/2] Setting up /etc/hosts...${NC}"
+    # Step 1: Setup symlink for easier sudo access
+    echo -e "${BLUE}[1/3] Setting up sudo symlink...${NC}"
+    setup_symlink
+    echo ""
+
+    # Step 2: Run setup:hosts
+    echo -e "${BLUE}[2/3] Setting up /etc/hosts...${NC}"
     echo ""
     bash "$PACKAGE_DIR/scripts/setup-hosts.sh"
 
     echo ""
-    echo -e "${BLUE}[2/2] Setting up wildcard DNS (*.test)...${NC}"
+    echo -e "${BLUE}[3/3] Setting up wildcard DNS (*.test)...${NC}"
     echo ""
-    bash "$PACKAGE_DIR/scripts/setup-dns.sh"
+    bash "$PACKAGE_DIR/scripts/setup-dns.sh" "$@"
 
     echo ""
     echo -e "${GREEN}"
@@ -4114,7 +4162,7 @@ cmd_setup_system() {
     echo -e "Your system is now configured for docker-local development."
     echo ""
     echo -e "${CYAN}Next steps:${NC}"
-    echo -e "  • Run ${WHITE}docker-local up${NC} to start services"
+    echo -e "  • Run ${WHITE}sudo docker-local up${NC} to start services"
     echo -e "  • Run ${WHITE}docker-local new myproject${NC} to create a project"
     echo -e "  • Run ${WHITE}docker-local doctor${NC} to verify setup"
     echo ""
@@ -4508,7 +4556,7 @@ case "$1" in
     setup) shift; cmd_setup "$@" ;;
     setup:dns) shift; cmd_setup_dns "$@" ;;
     setup:hosts) cmd_setup_hosts ;;
-    setup:system) cmd_setup_system ;;
+    setup:system) shift; cmd_setup_system "$@" ;;
     ssl:status) cmd_ssl_status ;;
     ssl:regenerate) cmd_ssl_regenerate ;;
 

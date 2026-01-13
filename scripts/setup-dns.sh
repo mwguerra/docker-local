@@ -5,7 +5,10 @@
 # ==============================================================================
 # This enables any subdomain to resolve to 127.0.0.1 automatically!
 #
-# Usage: sudo "$(which docker-local)" setup:dns
+# Usage:
+#   sudo "$(which docker-local)" setup:dns           # Auto-detect (Ubuntu/macOS)
+#   sudo "$(which docker-local)" setup:dns --wsl     # WSL2 with Docker Desktop
+#   sudo "$(which docker-local)" setup:dns --uninstall
 # ==============================================================================
 
 set -e
@@ -57,10 +60,60 @@ fi
 MACOS_DNSMASQ_DIR="$HOMEBREW_PREFIX/etc/dnsmasq.d"
 MACOS_DNSMASQ_CONF="$MACOS_DNSMASQ_DIR/docker-local.conf"
 
+# WSL2 paths
+WSL_DNSMASQ_CONF="/etc/dnsmasq.d/docker-local.conf"
+WSL_CONF="/etc/wsl.conf"
+WSL_RESOLV_CONF="/etc/resolv.conf"
+# Docker Desktop's DNS IP (used as fallback)
+DOCKER_DESKTOP_DNS="10.255.255.254"
+
+# ==============================================================================
+# WSL2 Detection
+# ==============================================================================
+is_wsl() {
+    # Check for WSL indicators
+    if grep -qi microsoft /proc/version 2>/dev/null; then
+        return 0
+    fi
+    if [ -f /proc/sys/fs/binfmt_misc/WSLInterop ]; then
+        return 0
+    fi
+    if [ -d /mnt/wsl ]; then
+        return 0
+    fi
+    return 1
+}
+
+# ==============================================================================
+# Parse arguments
+# ==============================================================================
+WSL_MODE=false
+UNINSTALL_MODE=false
+
+for arg in "$@"; do
+    case $arg in
+        --wsl|-w)
+            WSL_MODE=true
+            ;;
+        --uninstall|-u)
+            UNINSTALL_MODE=true
+            ;;
+    esac
+done
+
+# Auto-detect WSL if not explicitly specified and NetworkManager is not available
+if [[ "$WSL_MODE" == false ]] && [[ "$UNINSTALL_MODE" == false ]]; then
+    if is_wsl && ! systemctl is-active --quiet NetworkManager 2>/dev/null; then
+        echo -e "${YELLOW}WSL2 detected without NetworkManager. Use --wsl flag for WSL2-specific setup.${NC}"
+        echo -e "  ${CYAN}sudo \"\$(which docker-local)\" setup:dns --wsl${NC}"
+        echo ""
+    fi
+fi
+
 # ==============================================================================
 # Handle --uninstall flag
 # ==============================================================================
-if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ]; then
+if [ "$UNINSTALL_MODE" = true ]; then
     echo -e "${BLUE}"
     echo "╔═══════════════════════════════════════════════════════════════╗"
     echo "║         Removing docker-local DNS Configuration               ║"
@@ -157,6 +210,48 @@ if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ]; then
         removed_files=$((removed_files + 1))
     fi
 
+    # Remove WSL2 configs
+    if [ -f "$WSL_DNSMASQ_CONF" ]; then
+        rm -f "$WSL_DNSMASQ_CONF"
+        echo -e "${GREEN}✓${NC} Removed $WSL_DNSMASQ_CONF"
+        removed_files=$((removed_files + 1))
+    fi
+
+    # Restore WSL's auto-generated resolv.conf
+    if is_wsl; then
+        # Remove generateResolvConf=false from wsl.conf if present
+        if [ -f "$WSL_CONF" ] && grep -q "generateResolvConf = false" "$WSL_CONF" 2>/dev/null; then
+            # Remove the [network] section added by docker-local
+            sed -i '/^\[network\]$/,/^generateResolvConf = false$/d' "$WSL_CONF" 2>/dev/null || true
+            # Clean up empty lines at end of file
+            sed -i -e :a -e '/^\n*$/{$d;N;ba' -e '}' "$WSL_CONF" 2>/dev/null || true
+            echo -e "${GREEN}✓${NC} Restored WSL resolv.conf auto-generation"
+            removed_files=$((removed_files + 1))
+        fi
+
+        # Remove static resolv.conf (WSL will regenerate on restart)
+        if [ -f "$WSL_RESOLV_CONF" ] && ! [ -L "$WSL_RESOLV_CONF" ]; then
+            if grep -q "docker-local" "$WSL_RESOLV_CONF" 2>/dev/null; then
+                rm -f "$WSL_RESOLV_CONF"
+                echo -e "${GREEN}✓${NC} Removed static resolv.conf (WSL will regenerate on restart)"
+                removed_files=$((removed_files + 1))
+            fi
+        fi
+
+        # Stop dnsmasq service on WSL
+        if systemctl is-active --quiet dnsmasq 2>/dev/null; then
+            systemctl stop dnsmasq
+            systemctl disable dnsmasq 2>/dev/null || true
+            echo -e "${GREEN}✓${NC} Stopped dnsmasq service"
+        fi
+
+        # Restore DNSMASQ_EXCEPT setting
+        if [ -f /etc/default/dnsmasq ] && grep -q '^DNSMASQ_EXCEPT="lo"' /etc/default/dnsmasq 2>/dev/null; then
+            sed -i 's/^DNSMASQ_EXCEPT="lo"/#DNSMASQ_EXCEPT="lo"/' /etc/default/dnsmasq
+            echo -e "${GREEN}✓${NC} Restored resolvconf integration setting"
+        fi
+    fi
+
     if [ $removed_files -eq 0 ]; then
         echo -e "${YELLOW}No docker-local DNS configuration files found.${NC}"
     else
@@ -196,6 +291,230 @@ if [ "$1" = "--uninstall" ] || [ "$1" = "-u" ]; then
     exit 0
 fi
 
+# ==============================================================================
+# WSL2 Mode Installation
+# ==============================================================================
+if [ "$WSL_MODE" = true ]; then
+    echo -e "${BLUE}"
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║     Wildcard DNS Configuration for WSL2 + Docker Desktop     ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo ""
+
+    # Check if already configured
+    if check_wsl_existing_config; then
+        echo -e "${GREEN}✓ DNS wildcard already configured for WSL2!${NC}"
+        echo ""
+
+        # Check if dnsmasq is running
+        if systemctl is-active --quiet dnsmasq 2>/dev/null; then
+            echo -e "${GREEN}✓ dnsmasq is running${NC}"
+        else
+            echo -e "${YELLOW}⚠ dnsmasq is not running${NC}"
+            echo -e "  Try: ${CYAN}sudo systemctl start dnsmasq${NC}"
+        fi
+
+        echo ""
+        echo -e "${CYAN}Testing DNS resolution:${NC}"
+        if ping -c 1 -W 2 test.test > /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} *.test resolves to 127.0.0.1"
+        else
+            echo -e "  ${YELLOW}○${NC} *.test may not be resolving yet"
+            echo -e "  ${DIM}Try: sudo systemctl restart dnsmasq${NC}"
+        fi
+
+        if ping -c 1 -W 2 google.com > /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${NC} External DNS working"
+        else
+            echo -e "  ${YELLOW}○${NC} External DNS may not be working"
+        fi
+
+        echo ""
+        echo -e "No changes needed."
+        echo ""
+        exit 0
+    fi
+
+    # Verify WSL environment
+    if ! is_wsl; then
+        echo -e "${YELLOW}Warning: WSL2 not detected. Proceeding anyway since --wsl was specified.${NC}"
+        echo ""
+    fi
+
+    echo -e "${BLUE}Detected: WSL2 with Docker Desktop${NC}"
+    echo ""
+
+    # Check if dnsmasq is installed
+    if ! command -v dnsmasq &> /dev/null; then
+        echo -e "${YELLOW}Installing dnsmasq...${NC}"
+        apt-get update -qq && apt-get install -y -qq dnsmasq
+        echo -e "${GREEN}✓${NC} dnsmasq installed"
+    else
+        echo -e "${GREEN}✓${NC} dnsmasq already installed"
+    fi
+
+    # Clean up legacy configs
+    echo -e "${YELLOW}Cleaning up legacy configurations...${NC}"
+    [ -f "$LEGACY_DNSMASQ_CONF" ] && rm -f "$LEGACY_DNSMASQ_CONF" && echo -e "${GREEN}✓${NC} Removed legacy config"
+
+    # Step 1: Configure dnsmasq for WSL2
+    echo -e "${YELLOW}Configuring dnsmasq for WSL2...${NC}"
+    mkdir -p /etc/dnsmasq.d
+
+    cat > "$WSL_DNSMASQ_CONF" << EOF
+# docker-local: Wildcard DNS for development domains (WSL2)
+# Routes *.test and *.localhost to 127.0.0.1
+
+# Wildcard for .test domains
+address=/.test/127.0.0.1
+
+# Wildcard for .localhost domains
+address=/.localhost/127.0.0.1
+
+# Listen only on localhost to avoid conflict with Docker Desktop DNS
+listen-address=127.0.0.1
+bind-interfaces
+
+# Forward other queries to Docker Desktop's DNS
+server=$DOCKER_DESKTOP_DNS
+
+# Cache DNS
+cache-size=1000
+EOF
+    echo -e "${GREEN}✓${NC} Created $WSL_DNSMASQ_CONF"
+
+    # Step 2: Disable resolvconf integration (prevents systemd-networkd error on WSL2)
+    echo -e "${YELLOW}Disabling resolvconf integration...${NC}"
+    if [ -f /etc/default/dnsmasq ]; then
+        if grep -q "^DNSMASQ_EXCEPT=" /etc/default/dnsmasq 2>/dev/null; then
+            # Already set, ensure it's correct
+            sed -i 's/^DNSMASQ_EXCEPT=.*/DNSMASQ_EXCEPT="lo"/' /etc/default/dnsmasq
+        elif grep -q "^#DNSMASQ_EXCEPT=" /etc/default/dnsmasq 2>/dev/null; then
+            # Uncomment the existing line
+            sed -i 's/^#DNSMASQ_EXCEPT=.*/DNSMASQ_EXCEPT="lo"/' /etc/default/dnsmasq
+        else
+            # Add the setting
+            echo 'DNSMASQ_EXCEPT="lo"' >> /etc/default/dnsmasq
+        fi
+        echo -e "${GREEN}✓${NC} Disabled resolvconf integration"
+    fi
+
+    # Step 3: Configure wsl.conf to disable auto-generated resolv.conf
+    echo -e "${YELLOW}Configuring WSL to use static resolv.conf...${NC}"
+
+    if [ -f "$WSL_CONF" ]; then
+        # Check if [network] section already exists
+        if grep -q "^\[network\]" "$WSL_CONF" 2>/dev/null; then
+            # Check if generateResolvConf is already set
+            if ! grep -q "generateResolvConf" "$WSL_CONF" 2>/dev/null; then
+                # Add generateResolvConf under existing [network] section
+                sed -i '/^\[network\]/a generateResolvConf = false' "$WSL_CONF"
+                echo -e "${GREEN}✓${NC} Added generateResolvConf to existing [network] section"
+            else
+                echo -e "${GREEN}✓${NC} generateResolvConf already configured"
+            fi
+        else
+            # Add new [network] section
+            echo "" >> "$WSL_CONF"
+            echo "[network]" >> "$WSL_CONF"
+            echo "generateResolvConf = false" >> "$WSL_CONF"
+            echo -e "${GREEN}✓${NC} Added [network] section to $WSL_CONF"
+        fi
+    else
+        # Create wsl.conf
+        cat > "$WSL_CONF" << 'EOF'
+[network]
+generateResolvConf = false
+EOF
+        echo -e "${GREEN}✓${NC} Created $WSL_CONF"
+    fi
+
+    # Step 4: Create static resolv.conf
+    echo -e "${YELLOW}Creating static resolv.conf...${NC}"
+
+    # Remove existing resolv.conf (might be a symlink to /mnt/wsl/resolv.conf)
+    rm -f "$WSL_RESOLV_CONF"
+
+    cat > "$WSL_RESOLV_CONF" << EOF
+# docker-local: WSL2 DNS configuration
+# Primary: dnsmasq for .test domains
+nameserver 127.0.0.1
+# Fallback: Docker Desktop DNS / external
+nameserver $DOCKER_DESKTOP_DNS
+EOF
+    echo -e "${GREEN}✓${NC} Created $WSL_RESOLV_CONF"
+
+    # Step 5: Enable and start dnsmasq
+    echo -e "${YELLOW}Starting dnsmasq service...${NC}"
+    systemctl enable dnsmasq 2>/dev/null || true
+    systemctl restart dnsmasq
+    echo -e "${GREEN}✓${NC} dnsmasq service started"
+
+    # Wait for service to stabilize
+    sleep 1
+
+    # Verify
+    echo ""
+    echo -e "${CYAN}Verifying DNS resolution...${NC}"
+
+    dns_working=true
+    if ping -c 1 -W 2 test.test > /dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} test.test resolves to 127.0.0.1"
+    else
+        echo -e "  ${YELLOW}○${NC} test.test not resolving yet"
+        dns_working=false
+    fi
+
+    if ping -c 1 -W 2 google.com > /dev/null 2>&1; then
+        echo -e "  ${GREEN}✓${NC} External DNS (google.com) working"
+    else
+        echo -e "  ${YELLOW}○${NC} External DNS may not be working"
+        dns_working=false
+    fi
+
+    echo ""
+    echo -e "${GREEN}"
+    echo "╔═══════════════════════════════════════════════════════════════╗"
+    echo "║           WSL2 DNS Wildcard Configured!                       ║"
+    echo "╚═══════════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo ""
+    echo "Now you can use any .test or .localhost domain:"
+    echo ""
+    echo "  • https://myproject.test"
+    echo "  • https://api.myproject.test"
+    echo "  • https://anything.test"
+    echo ""
+    echo -e "${YELLOW}Test with:${NC} ping myproject.test"
+    echo ""
+
+    if [ "$dns_working" = false ]; then
+        echo -e "${YELLOW}Note:${NC} If DNS is not resolving, try:"
+        echo -e "  ${CYAN}sudo systemctl restart dnsmasq${NC}"
+        echo ""
+        echo -e "${YELLOW}Important:${NC} For wsl.conf changes to take full effect,"
+        echo -e "you may need to restart WSL:"
+        echo -e "  ${CYAN}wsl --shutdown${NC}  (from PowerShell/CMD)"
+        echo ""
+    fi
+
+    echo -e "${DIM}────────────────────────────────────────────────────────────────${NC}"
+    echo -e "${WHITE}Files created/modified:${NC}"
+    echo ""
+    echo -e "  ${DIM}•${NC} $WSL_DNSMASQ_CONF"
+    echo -e "  ${DIM}•${NC} $WSL_CONF"
+    echo -e "  ${DIM}•${NC} $WSL_RESOLV_CONF"
+    echo ""
+    echo -e "${DIM}To uninstall: sudo \"\$(which docker-local)\" setup:dns --uninstall${NC}"
+    echo ""
+
+    exit 0
+fi
+
+# ==============================================================================
+# NetworkManager Mode (Ubuntu/Linux) - Default
+# ==============================================================================
 echo -e "${BLUE}"
 echo "╔═══════════════════════════════════════════════════════════════╗"
 echo "║       Wildcard DNS Configuration with NetworkManager          ║"
@@ -221,6 +540,23 @@ check_existing_config() {
         fi
     fi
 
+    # WSL2
+    if [ -f "$WSL_DNSMASQ_CONF" ]; then
+        if grep -q "address=/.test/127.0.0.1" "$WSL_DNSMASQ_CONF" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+# WSL-specific existing config check
+check_wsl_existing_config() {
+    if [ -f "$WSL_DNSMASQ_CONF" ]; then
+        if grep -q "address=/.test/127.0.0.1" "$WSL_DNSMASQ_CONF" 2>/dev/null; then
+            return 0
+        fi
+    fi
     return 1
 }
 
