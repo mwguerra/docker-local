@@ -309,7 +309,7 @@ check_sudo() {
         echo -e "${RED}Error: This command requires root privileges${NC}"
         echo ""
         echo -e "Please run with sudo:"
-        echo -e "  ${CYAN}sudo \"\$(which docker-local)\" $1${NC}"
+        echo -e "  ${CYAN}sudo docker-local $1${NC}"
         echo ""
         exit 1
     fi
@@ -1912,7 +1912,7 @@ cmd_doctor() {
         echo -e "  ${GREEN}✓${NC} /etc/hosts configured"
     else
         echo -e "  ${YELLOW}⚠${NC} /etc/hosts not configured"
-        echo -e "      ${DIM}Run: sudo \"\$(which docker-local)\" setup:hosts${NC}"
+        echo -e "      ${DIM}Run: sudo docker-local setup:hosts${NC}"
         ((++warnings))
     fi
 
@@ -1955,9 +1955,9 @@ cmd_doctor() {
         if [ -f /etc/dnsmasq.d/laravel-dev.conf ] || [ -f /usr/local/etc/dnsmasq.d/laravel-dev.conf ]; then
             echo -e "  ${YELLOW}⚠${NC} dnsmasq configured (legacy path)"
             if [ "$is_wsl_env" = true ]; then
-                echo -e "      ${DIM}Consider running: sudo \"\$(which docker-local)\" setup:dns --wsl${NC}"
+                echo -e "      ${DIM}Consider running: sudo docker-local setup:dns --wsl${NC}"
             else
-                echo -e "      ${DIM}Consider running: sudo \"\$(which docker-local)\" setup:dns${NC}"
+                echo -e "      ${DIM}Consider running: sudo docker-local setup:dns${NC}"
             fi
             dnsmasq_configured=true
             dnsmasq_type="legacy"
@@ -1986,9 +1986,9 @@ cmd_doctor() {
     else
         echo -e "  ${YELLOW}⚠${NC} dnsmasq not configured"
         if [ "$is_wsl_env" = true ]; then
-            echo -e "      ${DIM}Run: sudo \"\$(which docker-local)\" setup:dns --wsl${NC}"
+            echo -e "      ${DIM}Run: sudo docker-local setup:dns --wsl${NC}"
         else
-            echo -e "      ${DIM}Run: sudo \"\$(which docker-local)\" setup:dns${NC}"
+            echo -e "      ${DIM}Run: sudo docker-local setup:dns${NC}"
         fi
         ((++warnings))
     fi
@@ -2333,7 +2333,7 @@ cmd_fix() {
             inc_issues
 
             if [ "$dry_run" = false ]; then
-                sudo_required+=("sudo \"\$(which docker-local)\" setup:hosts")
+                sudo_required+=("sudo docker-local setup:hosts")
             fi
         fi
         echo ""
@@ -2497,7 +2497,7 @@ cmd_fix() {
             done
 
             if [ "$needs_setup_dns" = true ]; then
-                sudo_required+=("sudo \"\$(which docker-local)\" setup:dns")
+                sudo_required+=("sudo docker-local setup:dns")
             fi
         fi
         echo ""
@@ -2902,7 +2902,7 @@ cmd_init() {
     if [ "$needs_symlink" = true ] || [ "$needs_hosts" = true ] || [ "$needs_dns" = true ]; then
         echo -e "${YELLOW}To complete setup, run this command with sudo:${NC}"
         echo ""
-        echo -e "  ${CYAN}sudo \"\$(which docker-local)\" setup:system${NC}"
+        echo -e "  ${CYAN}sudo docker-local setup:system${NC}"
         echo ""
         echo -e "  ${DIM}This will:${NC}"
         if [ "$needs_symlink" = true ]; then
@@ -2915,7 +2915,7 @@ cmd_init() {
             echo -e "  ${DIM}  • Enable *.test domain resolution${NC}"
         fi
         echo ""
-        echo -e "  ${DIM}On WSL2, add --wsl flag: sudo \"\$(which docker-local)\" setup:system --wsl${NC}"
+        echo -e "  ${DIM}On WSL2, add --wsl flag: sudo docker-local setup:system --wsl${NC}"
         echo ""
     else
         echo -e "${GREEN}✓ All configurations are complete!${NC}"
@@ -3082,14 +3082,17 @@ cmd_make_laravel() {
 cmd_make_env() {
     local current_dir=$(pwd)
     local env_file="$current_dir/.env"
-    
+
     if [ -f "$env_file" ]; then
         echo -e "${YELLOW}Warning: .env already exists${NC}"
         echo -e "Use ${CYAN}docker-local update:env${NC} to update existing configuration"
         echo -e "Or ${CYAN}docker-local env:check${NC} to verify current configuration"
         exit 1
     fi
-    
+
+    # Load docker-local configuration to get correct port values
+    load_env
+
     local project_name=$(basename "$current_dir")
     
     echo -e "${BLUE}Generating .env for: ${WHITE}$project_name${NC}"
@@ -3116,15 +3119,18 @@ cmd_make_env() {
 cmd_update_env() {
     local current_dir=$(pwd)
     local env_file="$current_dir/.env"
-    
+
     if [ ! -f "$env_file" ]; then
         echo -e "${RED}Error: .env not found${NC}"
         echo -e "Use ${CYAN}docker-local make:env${NC} to create a new .env file"
         exit 1
     fi
-    
+
+    # Load docker-local configuration to get correct port values
+    load_env
+
     local project_name=$(basename "$current_dir")
-    
+
     echo -e "${BLUE}Updating .env for: ${WHITE}$project_name${NC}"
     echo ""
     
@@ -3255,16 +3261,16 @@ check_env_conflicts() {
 # ==============================================================================
 cmd_env_check() {
     local check_all=false
-    
+
     # Verificar flags
     if [ "$1" = "--all" ] || [ "$1" = "-a" ]; then
         cmd_env_audit
         return
     fi
-    
+
     local current_dir=$(pwd)
     local env_file="$current_dir/.env"
-    
+
     if [ ! -f "$env_file" ]; then
         echo -e "${RED}Error: .env not found in current directory${NC}"
         echo ""
@@ -3274,18 +3280,21 @@ cmd_env_check() {
         echo -e "  • To check all projects: ${CYAN}docker-local env:check --all${NC}"
         exit 1
     fi
-    
+
+    # Load docker-local configuration to compare against .env values
+    load_env
+
     local project_name=$(basename "$current_dir")
-    
+
     show_logo
     echo -e "${WHITE}Environment Check: ${CYAN}$project_name${NC}"
     echo ""
-    
+
     # Função local para ler valores
     get_env_value() {
         grep "^$1=" "$env_file" 2>/dev/null | cut -d'=' -f2- | tr -d '"' | tr -d "'"
     }
-    
+
     local errors=0
     local warnings=0
     
@@ -3306,19 +3315,106 @@ cmd_env_check() {
     if [ "$hosts_ok" = false ]; then
         echo ""
         echo -e "  ${YELLOW}Why:${NC} Local PHP needs these hostnames to connect to Docker services."
-        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}sudo \"\$(which docker-local)\" setup:hosts${NC}"
-        ((++warnings))
+        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}sudo docker-local setup:hosts${NC}"
+        warnings=$((warnings + 1))
     fi
     echo ""
-    
+
     # ══════════════════════════════════════════════════════════════════════════
-    # 2. Verificar Database
+    # 2. Configuration Drift Detection (ports vs docker-local config)
+    # ══════════════════════════════════════════════════════════════════════════
+    echo -e "${WHITE}┌─ Port Configuration (vs docker-local config) ────────────────────┐${NC}"
+    local drift_found=false
+
+    # Get values from .env
+    local env_db_port=$(get_env_value "DB_PORT")
+    local env_db_connection=$(get_env_value "DB_CONNECTION")
+    local env_redis_port=$(get_env_value "REDIS_PORT")
+    local env_mail_port=$(get_env_value "MAIL_PORT")
+    local env_aws_endpoint=$(get_env_value "AWS_ENDPOINT")
+
+    # Determine expected database port based on connection type
+    local expected_db_port=""
+    case "$env_db_connection" in
+        mysql|mariadb)
+            expected_db_port="${MYSQL_PORT:-3306}"
+            ;;
+        pgsql)
+            expected_db_port="${POSTGRES_PORT:-5432}"
+            ;;
+    esac
+
+    # Check database port
+    if [ -n "$expected_db_port" ] && [ -n "$env_db_port" ]; then
+        if [ "$env_db_port" = "$expected_db_port" ]; then
+            echo -e "  ${GREEN}✓${NC} DB_PORT=${env_db_port} ${DIM}(matches docker-local config)${NC}"
+        else
+            echo -e "  ${RED}✗${NC} DB_PORT=${env_db_port} ${DIM}(expected: $expected_db_port)${NC}"
+            drift_found=true
+            errors=$((errors + 1))
+        fi
+    fi
+
+    # Check Redis port
+    local expected_redis_port="${REDIS_PORT:-6379}"
+    if [ -n "$env_redis_port" ]; then
+        if [ "$env_redis_port" = "$expected_redis_port" ]; then
+            echo -e "  ${GREEN}✓${NC} REDIS_PORT=${env_redis_port} ${DIM}(matches docker-local config)${NC}"
+        else
+            echo -e "  ${RED}✗${NC} REDIS_PORT=${env_redis_port} ${DIM}(expected: $expected_redis_port)${NC}"
+            drift_found=true
+            errors=$((errors + 1))
+        fi
+    fi
+
+    # Check Mail port
+    local expected_mail_port="${MAILPIT_SMTP_PORT:-1025}"
+    if [ -n "$env_mail_port" ]; then
+        if [ "$env_mail_port" = "$expected_mail_port" ]; then
+            echo -e "  ${GREEN}✓${NC} MAIL_PORT=${env_mail_port} ${DIM}(matches docker-local config)${NC}"
+        else
+            echo -e "  ${RED}✗${NC} MAIL_PORT=${env_mail_port} ${DIM}(expected: $expected_mail_port)${NC}"
+            drift_found=true
+            errors=$((errors + 1))
+        fi
+    fi
+
+    # Check MinIO port (extract from AWS_ENDPOINT)
+    local expected_minio_port="${MINIO_API_PORT:-9000}"
+    if [ -n "$env_aws_endpoint" ]; then
+        # Extract port from URL like http://minio:9000
+        local env_minio_port=$(echo "$env_aws_endpoint" | grep -oP ':\K[0-9]+$')
+        if [ -n "$env_minio_port" ]; then
+            if [ "$env_minio_port" = "$expected_minio_port" ]; then
+                echo -e "  ${GREEN}✓${NC} AWS_ENDPOINT port=${env_minio_port} ${DIM}(matches docker-local config)${NC}"
+            else
+                echo -e "  ${RED}✗${NC} AWS_ENDPOINT port=${env_minio_port} ${DIM}(expected: $expected_minio_port)${NC}"
+                drift_found=true
+                errors=$((errors + 1))
+            fi
+        fi
+    fi
+
+    if [ "$drift_found" = true ]; then
+        echo ""
+        echo -e "  ${YELLOW}Why:${NC} Your .env ports don't match docker-local configuration."
+        echo -e "       Connections will fail if services use different ports."
+        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}docker-local update:env${NC} to sync with current config"
+    else
+        echo -e "  ${DIM}All ports match docker-local configuration${NC}"
+    fi
+    echo ""
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # 3. Verificar Database
     # ══════════════════════════════════════════════════════════════════════════
     echo -e "${WHITE}┌─ Database ───────────────────────────────────────────────────────┐${NC}"
     local db_connection=$(get_env_value "DB_CONNECTION")
     local db_host=$(get_env_value "DB_HOST")
     local db_port=$(get_env_value "DB_PORT")
     local db_database=$(get_env_value "DB_DATABASE")
+    local db_username=$(get_env_value "DB_USERNAME")
+    local db_password=$(get_env_value "DB_PASSWORD")
 
     # Handle SQLite separately - it's file-based, not a container
     if [ "$db_connection" = "sqlite" ]; then
@@ -3336,7 +3432,7 @@ cmd_env_check() {
         else
             echo -e "  ${YELLOW}⚠${NC} Database file not found: ${DIM}$sqlite_path${NC}"
             echo -e "    ${DIM}Run: touch $sqlite_path${NC}"
-            ((++warnings))
+            warnings=$((warnings + 1))
         fi
     else
         # Container-based databases (mysql, pgsql, mariadb)
@@ -3350,39 +3446,53 @@ cmd_env_check() {
         if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^$container_name$"; then
             echo -e "  ${GREEN}✓${NC} Container '$container_name' is running"
 
-            # Test actual database connection
+            # Test actual database connection using credentials from .env
             local conn_ok=false
+            local conn_error=""
             case "$db_connection" in
                 mysql|mariadb)
-                    if docker exec $container_name mysql -u "${MYSQL_USER:-laravel}" -p"${MYSQL_PASSWORD:-secret}" -e "SELECT 1;" >/dev/null 2>&1; then
+                    # Use credentials from project .env file
+                    local test_user="${db_username:-laravel}"
+                    local test_pass="${db_password:-secret}"
+                    if docker exec $container_name mysql -u "$test_user" -p"$test_pass" -e "SELECT 1;" >/dev/null 2>&1; then
                         conn_ok=true
+                    else
+                        conn_error=$(docker exec $container_name mysql -u "$test_user" -p"$test_pass" -e "SELECT 1;" 2>&1 || true)
                     fi
                     ;;
                 pgsql)
-                    if docker exec $container_name psql -U "${POSTGRES_USER:-laravel}" -c "SELECT 1;" >/dev/null 2>&1; then
+                    # Use credentials from project .env file
+                    local test_user="${db_username:-laravel}"
+                    if docker exec -e PGPASSWORD="${db_password:-secret}" $container_name psql -U "$test_user" -d "${db_database:-laravel}" -c "SELECT 1;" >/dev/null 2>&1; then
                         conn_ok=true
+                    else
+                        conn_error=$(docker exec -e PGPASSWORD="${db_password:-secret}" $container_name psql -U "$test_user" -d "${db_database:-laravel}" -c "SELECT 1;" 2>&1 || true)
                     fi
                     ;;
             esac
 
             if [ "$conn_ok" = true ]; then
-                echo -e "  ${GREEN}✓${NC} Connection OK"
+                echo -e "  ${GREEN}✓${NC} Connection OK (using .env credentials)"
             else
-                echo -e "  ${YELLOW}⚠${NC} Container running but connection test inconclusive"
-                echo -e "    ${DIM}This may be normal if using custom credentials${NC}"
+                echo -e "  ${YELLOW}⚠${NC} Container running but connection test failed"
+                if [ -n "$conn_error" ]; then
+                    echo -e "    ${DIM}Error: ${conn_error:0:80}${NC}"
+                fi
+                echo -e "    ${DIM}Check DB_USERNAME and DB_PASSWORD in your .env${NC}"
+                warnings=$((warnings + 1))
             fi
         else
             echo -e "  ${RED}✗${NC} Container '$container_name' is not running"
             echo ""
             echo -e "  ${YELLOW}Why:${NC} Database container must be running for your app to work."
             echo -e "  ${YELLOW}Fix:${NC} ${CYAN}docker-local up${NC}"
-            ((errors++))
+            errors=$((errors + 1))
         fi
     fi
     echo ""
     
     # ══════════════════════════════════════════════════════════════════════════
-    # 3. Verificar Redis e Prefixos
+    # 4. Verificar Redis e Prefixos
     # ══════════════════════════════════════════════════════════════════════════
     echo -e "${WHITE}┌─ Redis & Cache Isolation ────────────────────────────────────────┐${NC}"
     local redis_host=$(get_env_value "REDIS_HOST")
@@ -3399,22 +3509,22 @@ cmd_env_check() {
     else
         echo -e "  ${RED}✗${NC} Redis container is not running"
         echo -e "  ${YELLOW}Fix:${NC} ${CYAN}docker-local up${NC}"
-        ((errors++))
+        errors=$((errors + 1))
     fi
-    
+
     # Cache prefix check
     echo ""
     echo -e "  ${WHITE}Cache Isolation:${NC}"
     if [ -n "$cache_prefix" ]; then
         echo -e "  ${GREEN}✓${NC} CACHE_PREFIX = ${CYAN}$cache_prefix${NC}"
-        
+
         # Verificar se o prefixo contém o nome do projeto
         if [[ "$cache_prefix" == *"$project_name"* ]] || [[ "$cache_prefix" == *"$(echo $app_name | tr -d '"' | tr -d "'")"* ]]; then
             echo -e "    ${DIM}Good: Prefix includes project identifier${NC}"
         else
             echo -e "  ${YELLOW}⚠${NC} Prefix doesn't include project name"
             echo -e "    ${DIM}Consider: CACHE_PREFIX=${project_name}_cache_${NC}"
-            ((++warnings))
+            warnings=$((warnings + 1))
         fi
     else
         echo -e "  ${YELLOW}⚠${NC} CACHE_PREFIX not set"
@@ -3422,12 +3532,12 @@ cmd_env_check() {
         echo -e "  ${YELLOW}Why:${NC} Without a unique prefix, cache keys from different projects"
         echo -e "       will collide, causing data corruption and unexpected behavior."
         echo -e "  ${YELLOW}Fix:${NC} Add to .env: ${CYAN}CACHE_PREFIX=${project_name}_cache_${NC}"
-        ((++warnings))
+        warnings=$((warnings + 1))
     fi
     echo ""
     
     # ══════════════════════════════════════════════════════════════════════════
-    # 4. Verificar Reverb/Broadcasting
+    # 5. Verificar Reverb/Broadcasting
     # ══════════════════════════════════════════════════════════════════════════
     echo -e "${WHITE}┌─ Reverb (WebSockets) Isolation ──────────────────────────────────┐${NC}"
     local reverb_app_id=$(get_env_value "REVERB_APP_ID")
@@ -3446,59 +3556,59 @@ cmd_env_check() {
             echo -e "  ${YELLOW}Why:${NC} Each project needs a unique APP_ID to isolate WebSocket channels."
             echo -e "       Without this, real-time messages will be broadcast to wrong clients."
             echo -e "  ${YELLOW}Fix:${NC} Run ${CYAN}docker-local update:env${NC} to generate unique values"
-            ((errors++))
+            errors=$((errors + 1))
         fi
-        
+
         if [ -n "$reverb_app_key" ]; then
             echo -e "  ${GREEN}✓${NC} REVERB_APP_KEY = ${CYAN}${reverb_app_key:0:16}...${NC}"
         else
             echo -e "  ${RED}✗${NC} REVERB_APP_KEY not set"
-            ((errors++))
+            errors=$((errors + 1))
         fi
-        
+
         if [ -n "$reverb_app_secret" ]; then
             echo -e "  ${GREEN}✓${NC} REVERB_APP_SECRET = ${CYAN}${reverb_app_secret:0:8}...${NC} ${DIM}(hidden)${NC}"
         else
             echo -e "  ${RED}✗${NC} REVERB_APP_SECRET not set"
-            ((errors++))
+            errors=$((errors + 1))
         fi
     else
         echo -e "  ${DIM}○${NC} Reverb not configured (BROADCAST_CONNECTION=$broadcast_conn)"
         echo -e "    ${DIM}This is OK if you don't need real-time features${NC}"
     fi
     echo ""
-    
+
     # ══════════════════════════════════════════════════════════════════════════
-    # 5. Verificar conflitos com outros projetos
+    # 6. Verificar conflitos com outros projetos
     # ══════════════════════════════════════════════════════════════════════════
     echo -e "${WHITE}┌─ Cross-Project Conflicts ────────────────────────────────────────┐${NC}"
     local conflict_output=$(check_env_conflicts "$project_name" "$env_file" 2>&1)
-    
+
     if [ -n "$conflict_output" ]; then
         echo "$conflict_output"
-        ((errors++))
+        errors=$((errors + 1))
     else
         echo -e "  ${GREEN}✓${NC} No conflicts with other projects"
     fi
     echo ""
-    
+
     # ══════════════════════════════════════════════════════════════════════════
-    # 6. Verificar APP_URL e DNS
+    # 7. Verificar APP_URL e DNS
     # ══════════════════════════════════════════════════════════════════════════
     echo -e "${WHITE}┌─ Application URL ────────────────────────────────────────────────┐${NC}"
     local app_url=$(get_env_value "APP_URL")
     echo -e "  ${CYAN}URL:${NC} $app_url"
-    
+
     local domain=$(echo "$app_url" | sed -E 's|https?://||' | cut -d'/' -f1 | cut -d':' -f1)
-    
+
     if ping -c 1 -W 1 "$domain" > /dev/null 2>&1; then
         echo -e "  ${GREEN}✓${NC} DNS resolves: $domain → $(ping -c 1 -W 1 "$domain" 2>/dev/null | grep -oP '\(\K[^\)]+' | head -1)"
     else
         echo -e "  ${YELLOW}⚠${NC} DNS not resolving: $domain"
         echo ""
         echo -e "  ${YELLOW}Why:${NC} Your browser won't be able to access https://$domain"
-        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}sudo \"\$(which docker-local)\" setup:dns${NC}"
-        ((++warnings))
+        echo -e "  ${YELLOW}Fix:${NC} ${CYAN}sudo docker-local setup:dns${NC}"
+        warnings=$((warnings + 1))
     fi
     echo ""
     
@@ -3521,7 +3631,7 @@ cmd_env_check() {
         echo -e "${WHITE}Quick fixes:${NC}"
         echo -e "  • Update .env with unique values: ${CYAN}docker-local update:env${NC}"
         echo -e "  • Start Docker services: ${CYAN}docker-local up${NC}"
-        echo -e "  • Configure system hosts: ${CYAN}sudo \"\$(which docker-local)\" setup:hosts${NC}"
+        echo -e "  • Configure system hosts: ${CYAN}sudo docker-local setup:hosts${NC}"
     fi
     echo ""
 }
