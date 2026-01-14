@@ -1999,15 +1999,62 @@ cmd_doctor() {
     
     if command -v php &> /dev/null; then
         local php_version=$(php -v | head -1 | awk '{print $2}')
+        local php_major_minor=$(echo "$php_version" | cut -d. -f1,2)
         echo -e "  ${GREEN}✓${NC} PHP $php_version"
-        
+
+        local missing_exts=()
         for ext in pdo_mysql redis mbstring xml curl zip gd intl; do
             if php -m 2>/dev/null | grep -qi "^$ext$"; then
                 echo -e "  ${GREEN}✓${NC} ext-$ext"
             else
                 echo -e "  ${YELLOW}○${NC} ext-$ext ${DIM}(not installed)${NC}"
+                missing_exts+=("$ext")
             fi
         done
+
+        # Show installation instructions if there are missing extensions
+        if [ ${#missing_exts[@]} -gt 0 ]; then
+            echo ""
+            echo -e "  ${DIM}To install missing extensions:${NC}"
+
+            # Detect OS and show appropriate instructions
+            if [ -f /etc/os-release ]; then
+                . /etc/os-release
+                if [[ "$ID" == "ubuntu" || "$ID_LIKE" == *"ubuntu"* || "$ID_LIKE" == *"debian"* || "$ID" == "debian" ]]; then
+                    # Build the apt package list
+                    local apt_packages=""
+                    for ext in "${missing_exts[@]}"; do
+                        case "$ext" in
+                            pdo_mysql) apt_packages+=" php${php_major_minor}-mysql" ;;
+                            xml)       apt_packages+=" php${php_major_minor}-xml" ;;
+                            gd)        apt_packages+=" php${php_major_minor}-gd" ;;
+                            *)         apt_packages+=" php${php_major_minor}-${ext}" ;;
+                        esac
+                    done
+                    echo -e "  ${CYAN}sudo apt install${apt_packages}${NC}"
+                elif [[ "$ID" == "fedora" || "$ID_LIKE" == *"fedora"* || "$ID" == "rhel" || "$ID" == "centos" ]]; then
+                    local dnf_packages=""
+                    for ext in "${missing_exts[@]}"; do
+                        case "$ext" in
+                            pdo_mysql) dnf_packages+=" php-mysqlnd" ;;
+                            xml)       dnf_packages+=" php-xml" ;;
+                            *)         dnf_packages+=" php-${ext}" ;;
+                        esac
+                    done
+                    echo -e "  ${CYAN}sudo dnf install${dnf_packages}${NC}"
+                elif [[ "$ID" == "arch" || "$ID_LIKE" == *"arch"* ]]; then
+                    echo -e "  ${CYAN}Check AUR for php-${missing_exts[*]}${NC}"
+                fi
+            elif [[ "$(uname)" == "Darwin" ]]; then
+                # macOS with Homebrew
+                local brew_packages=""
+                for ext in "${missing_exts[@]}"; do
+                    brew_packages+=" php@${php_major_minor}-${ext}"
+                done
+                echo -e "  ${CYAN}brew install${brew_packages}${NC}"
+                echo -e "  ${DIM}Or with pecl: pecl install ${missing_exts[*]}${NC}"
+            fi
+        fi
     else
         echo -e "  ${YELLOW}○${NC} PHP not installed locally"
         ((++warnings))
@@ -2889,8 +2936,19 @@ cmd_init() {
 
 cmd_up() {
     check_docker_running
+
+    # Check if PHP image exists - if not, guide user to run init
+    # This prevents surprise 30+ minute builds when running 'up'
+    if ! docker images --format '{{.Repository}}' | grep -qE "^(docker-local-php|docker-php|.*-php)$"; then
+        echo -e "${YELLOW}Docker images not found.${NC}"
+        echo -e "Run ${CYAN}docker-local init${NC} first to build the required images."
+        echo ""
+        echo -e "${DIM}This is a one-time setup that builds the PHP environment.${NC}"
+        exit 1
+    fi
+
     echo -e "${BLUE}Starting Docker environment...${NC}"
-    docker_compose up -d
+    docker_compose up -d --no-build
     echo -e "${GREEN}✓ Environment started${NC}"
     echo ""
     echo -e "Run ${CYAN}docker-local status${NC} to see service status"
