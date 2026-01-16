@@ -29,8 +29,16 @@ else
     exit 1
 fi
 
-# Version
-VERSION="2.0.0"
+# Version - read dynamically from composer.json
+get_version() {
+    local composer_file="$PACKAGE_DIR/composer.json"
+    if [ -f "$composer_file" ]; then
+        grep -o '"version"[[:space:]]*:[[:space:]]*"[^"]*"' "$composer_file" | head -1 | sed 's/.*"\([^"]*\)"$/\1/'
+    else
+        echo "unknown"
+    fi
+}
+VERSION="$(get_version)"
 
 # Configuration directory (XDG compliant)
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/docker-local"
