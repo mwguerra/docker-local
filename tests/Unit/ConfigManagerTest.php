@@ -285,7 +285,7 @@ describe('ConfigManager', function () {
             $config = new ConfigManager($pathResolver);
             $config->initializeDefaults();
 
-            expect($config->get('reverb.port'))->toBe(8080);
+            expect($config->get('reverb.port'))->toBe(6001);
             expect($config->get('reverb.project_name'))->toBe('myapp');
             expect($config->get('reverb.app_id'))->toBe('my-app-id');
             expect($config->get('reverb.app_key'))->toBe('my-app-key');

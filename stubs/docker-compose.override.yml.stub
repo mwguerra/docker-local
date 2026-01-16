@@ -74,18 +74,18 @@ services:
   #   volumes:
   #     - ${PROJECTS_PATH:-../projects}:/var/www:cached
   #   ports:
-  #     - "${REVERB_PORT:-8080}:8080"
+  #     - "${REVERB_PORT:-6001}:6001"
   #   networks:
   #     - laravel-dev
   #   depends_on:
   #     - redis
-  #   command: php artisan reverb:start --host=0.0.0.0 --port=8080
+  #   command: php artisan reverb:start --host=0.0.0.0 --port=6001
   #   labels:
   #     - "traefik.enable=true"
   #     - "traefik.http.routers.reverb.rule=Host(`ws.localhost`)"
   #     - "traefik.http.routers.reverb.entrypoints=websecure"
   #     - "traefik.http.routers.reverb.tls=true"
-  #     - "traefik.http.services.reverb.loadbalancer.server.port=8080"
+  #     - "traefik.http.services.reverb.loadbalancer.server.port=6001"
 
   # ============================================================================
   # LARAVEL SCHEDULER - Cron Jobs

@@ -221,7 +221,7 @@ load_env() {
     export XDEBUG_MODE=$(get_nested_config "xdebug.mode" "develop,debug")
 
     # Load Reverb settings
-    export REVERB_PORT=$(get_nested_config "reverb.port" "8080")
+    export REVERB_PORT=$(get_nested_config "reverb.port" "6001")
     export REVERB_PROJECT_NAME=$(get_nested_config "reverb.project_name" "myapp")
     export REVERB_APP_ID=$(get_nested_config "reverb.app_id" "my-app-id")
     export REVERB_APP_KEY=$(get_nested_config "reverb.app_key" "my-app-key")

@@ -251,7 +251,7 @@ class ConfigManager
                 'smtp_port' => 1025,
             ],
             'reverb' => [
-                'port' => 8080,
+                'port' => 6001,
                 'project_name' => 'myapp',
                 'app_id' => 'my-app-id',
                 'app_key' => 'my-app-key',

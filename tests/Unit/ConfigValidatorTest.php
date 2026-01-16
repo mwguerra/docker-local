@@ -144,7 +144,7 @@ describe('ConfigValidator', function () {
                 'version' => '2.0.0',
                 'projects_path' => '/path',
                 'reverb' => [
-                    'port' => 8080,
+                    'port' => 6001,
                     'project_name' => 'myapp',
                     'app_id' => 'my-app-id',
                     'app_key' => 'my-app-key',
@@ -179,10 +179,10 @@ describe('ConfigValidator', function () {
                 'version' => '2.0.0',
                 'projects_path' => '/path',
                 'mailpit' => [
-                    'web_port' => 8080,
+                    'web_port' => 7000,
                 ],
                 'reverb' => [
-                    'port' => 8080, // Conflict with Mailpit
+                    'port' => 7000, // Conflict with Mailpit
                 ],
             ];
 
@@ -198,6 +198,29 @@ describe('ConfigValidator', function () {
                 }
             }
             expect($hasConflict)->toBeTrue();
+        });
+
+        it('detects reverb port conflict with Traefik reserved port 8080', function () {
+            $config = [
+                'version' => '2.0.0',
+                'projects_path' => '/path',
+                'reverb' => [
+                    'port' => 8080, // Conflicts with Traefik Dashboard
+                ],
+            ];
+
+            $result = $this->validator->validate($config);
+
+            expect($result)->toBeFalse();
+            $errors = $this->validator->getErrors();
+            $hasTraefikConflict = false;
+            foreach ($errors as $error) {
+                if (str_contains($error, 'Traefik Dashboard')) {
+                    $hasTraefikConflict = true;
+                    break;
+                }
+            }
+            expect($hasTraefikConflict)->toBeTrue();
         });
 
         it('allows optional keys to be missing', function () {

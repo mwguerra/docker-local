@@ -169,7 +169,14 @@ class ConfigValidator
      */
     private function checkPortConflicts(array $config): void
     {
-        $ports = [];
+        // Reserved ports used by Traefik (hardcoded in docker-compose.yml)
+        $reservedPorts = [
+            80 => 'Traefik HTTP',
+            443 => 'Traefik HTTPS',
+            8080 => 'Traefik Dashboard',
+        ];
+
+        $ports = $reservedPorts;
         $portKeys = [
             'mysql.port' => 'MySQL',
             'postgres.port' => 'PostgreSQL',

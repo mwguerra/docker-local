@@ -382,16 +382,21 @@ check_init_conflicts() {
     local container_conflicts=()
 
     # Define ports to check (service:port:name)
+    # Include configurable ports from environment
+    local reverb_port="${REVERB_PORT:-6001}"
+
     local services=(
         "traefik:80:Traefik (HTTP)"
         "traefik:443:Traefik (HTTPS)"
-        "mysql:3306:MySQL"
-        "postgres:5432:PostgreSQL"
-        "redis:6379:Redis"
-        "minio:9000:MinIO API"
-        "minio:9001:MinIO Console"
-        "mailpit:1025:Mailpit SMTP"
-        "mailpit:8025:Mailpit Web"
+        "traefik:8080:Traefik Dashboard"
+        "mysql:${MYSQL_PORT:-3306}:MySQL"
+        "postgres:${POSTGRES_PORT:-5432}:PostgreSQL"
+        "redis:${REDIS_PORT:-6379}:Redis"
+        "minio:${MINIO_API_PORT:-9000}:MinIO API"
+        "minio:${MINIO_CONSOLE_PORT:-9001}:MinIO Console"
+        "mailpit:${MAILPIT_SMTP_PORT:-1025}:Mailpit SMTP"
+        "mailpit:${MAILPIT_WEB_PORT:-8025}:Mailpit Web"
+        "reverb:${reverb_port}:Reverb WebSocket"
     )
 
     echo -e "${BLUE}[Pre-flight] Checking for conflicts...${NC}"
@@ -406,7 +411,7 @@ check_init_conflicts() {
     done
 
     # Check container name conflicts (non-docker-local containers)
-    local containers=("traefik" "mysql" "postgres" "redis" "minio" "minio-setup" "mailpit" "nginx" "php")
+    local containers=("traefik" "mysql" "postgres" "redis" "minio" "minio-setup" "mailpit" "nginx" "php" "reverb" "node" "whisper" "rtmp")
     for container in "${containers[@]}"; do
         if check_container_exists "$container"; then
             # Check if it's from a different compose project
@@ -479,6 +484,66 @@ cleanup_docker_local() {
     docker volume rm laravel-dev-mysql laravel-dev-postgres laravel-dev-redis laravel-dev-minio 2>/dev/null || true
 
     echo -e "${GREEN}  ✓ Cleanup complete${NC}"
+}
+
+# Auto-repair known configuration conflicts
+auto_repair_config() {
+    local config_file="$CONFIG_DIR/config.json"
+    local repairs_made=false
+
+    if [ ! -f "$config_file" ]; then
+        return 0
+    fi
+
+    # Check for Reverb port 8080 conflict with Traefik dashboard
+    local reverb_port=$(grep -oP '"port"\s*:\s*\K[0-9]+' "$config_file" 2>/dev/null | tail -1)
+    if [ "$reverb_port" = "8080" ]; then
+        echo -e "${YELLOW}  ⚠ Detected config conflict: Reverb port 8080 conflicts with Traefik dashboard${NC}"
+        echo -e "${YELLOW}  → Auto-repairing: changing Reverb port from 8080 to 6001...${NC}"
+
+        # Use sed to fix the port in the reverb section
+        # We need to be careful to only change the port in the reverb section
+        if command -v jq &>/dev/null; then
+            # Use jq if available for safe JSON manipulation
+            local temp_file=$(mktemp)
+            jq '.reverb.port = 6001' "$config_file" > "$temp_file" && mv "$temp_file" "$config_file"
+        else
+            # Fallback: use sed with context matching
+            # This is a simple approach that works for our specific config format
+            sed -i 's/"reverb"[[:space:]]*:[[:space:]]*{[^}]*"port"[[:space:]]*:[[:space:]]*8080/"reverb": {\n    "port": 6001/g' "$config_file" 2>/dev/null || true
+            # If the above complex pattern fails, try simpler approach (may affect other ports too, but safer)
+            # Only if reverb section exists and port is 8080
+            if grep -q '"reverb"' "$config_file" && grep -q '"port".*8080' "$config_file"; then
+                python3 -c "
+import json
+with open('$config_file', 'r') as f:
+    config = json.load(f)
+if 'reverb' in config and config['reverb'].get('port') == 8080:
+    config['reverb']['port'] = 6001
+    with open('$config_file', 'w') as f:
+        json.dump(config, f, indent=2)
+" 2>/dev/null || true
+            fi
+        fi
+
+        echo -e "${GREEN}  ✓ Config repaired: Reverb now uses port 6001${NC}"
+        repairs_made=true
+    fi
+
+    # Add reverb section if missing (for older configs)
+    if ! grep -q '"reverb"' "$config_file" 2>/dev/null; then
+        echo -e "${YELLOW}  → Adding missing Reverb configuration...${NC}"
+        if command -v jq &>/dev/null; then
+            local temp_file=$(mktemp)
+            jq '. + {"reverb": {"port": 6001, "project_name": "myapp", "scaling_enabled": false}}' "$config_file" > "$temp_file" && mv "$temp_file" "$config_file"
+            echo -e "${GREEN}  ✓ Added Reverb configuration (port 6001)${NC}"
+            repairs_made=true
+        fi
+    fi
+
+    if [ "$repairs_made" = true ]; then
+        echo ""
+    fi
 }
 
 get_current_project() {
@@ -2771,6 +2836,12 @@ cmd_init() {
         echo -e "${GREEN}  ✓ config.json already exists${NC}"
     fi
 
+    # Auto-repair known configuration conflicts (e.g., Reverb port 8080 vs Traefik)
+    auto_repair_config
+
+    # Reload environment after potential config repairs
+    load_env
+
     # Copy traefik config if it doesn't exist
     if [ ! -d "$CONFIG_DIR/traefik/dynamic" ]; then
         mkdir -p "$CONFIG_DIR/traefik/dynamic"
@@ -2822,15 +2893,68 @@ cmd_init() {
         echo ""
 
         # Parse common errors and provide helpful messages
-        if echo "$compose_output" | grep -q "address already in use"; then
-            local port=$(echo "$compose_output" | grep -oP 'port \K[0-9]+' | head -1)
-            echo -e "${YELLOW}  Port conflict detected on port $port${NC}"
+        if echo "$compose_output" | grep -qE "address already in use|port is already allocated|Bind for .* failed"; then
+            # Try multiple patterns to extract port number
+            local port=$(echo "$compose_output" | grep -oP 'Bind for [^:]+:\K[0-9]+' | head -1)
+            if [ -z "$port" ]; then
+                port=$(echo "$compose_output" | grep -oP 'port \K[0-9]+' | head -1)
+            fi
+            if [ -z "$port" ]; then
+                port=$(echo "$compose_output" | grep -oP '0\.0\.0\.0:\K[0-9]+' | head -1)
+            fi
+
+            # Identify which service uses this port
+            local conflicting_service=""
+            case "$port" in
+                80)   conflicting_service="Traefik HTTP" ;;
+                443)  conflicting_service="Traefik HTTPS" ;;
+                8080) conflicting_service="Traefik Dashboard - this port conflicts with Reverb if REVERB_PORT=8080" ;;
+                3306) conflicting_service="MySQL" ;;
+                5432) conflicting_service="PostgreSQL" ;;
+                6379) conflicting_service="Redis" ;;
+                6001) conflicting_service="Reverb WebSocket" ;;
+                9000) conflicting_service="MinIO API" ;;
+                9001) conflicting_service="MinIO Console" ;;
+                1025) conflicting_service="Mailpit SMTP" ;;
+                8025) conflicting_service="Mailpit Web" ;;
+            esac
+
+            echo -e "${YELLOW}  Port conflict detected on port ${CYAN}$port${NC}"
+            if [ -n "$conflicting_service" ]; then
+                echo -e "  This port is used by: ${WHITE}$conflicting_service${NC}"
+            fi
             echo ""
-            echo -e "  Check what's using the port:"
-            echo -e "    ${CYAN}ss -tlnp | grep :$port${NC}"
-            echo ""
-            echo -e "  Common fixes:"
-            echo -e "    ${CYAN}sudo systemctl stop nginx mysql postgresql redis${NC}"
+
+            # Check what's actually using the port
+            local port_info=$(ss -tlnp 2>/dev/null | grep ":${port} " || true)
+            if [ -n "$port_info" ]; then
+                echo -e "  Currently in use by:"
+                echo -e "    ${DIM}$port_info${NC}"
+                echo ""
+            fi
+
+            # Check if it's a docker-local container conflict (internal ports)
+            if echo "$compose_output" | grep -q "endpoint"; then
+                local endpoint=$(echo "$compose_output" | grep -oP 'endpoint \K[^ (]+' | head -1)
+                echo -e "  ${YELLOW}Note:${NC} This is an internal Docker port conflict."
+                echo -e "  Container ${CYAN}$endpoint${NC} is trying to bind to port $port"
+                echo -e "  but another container has already claimed it."
+                echo ""
+                if [ "$port" = "8080" ]; then
+                    echo -e "  ${WHITE}Likely cause:${NC} Both Traefik (dashboard) and Reverb are configured for port 8080."
+                    echo -e "  ${WHITE}Solution:${NC} Reverb should use port 6001 (default), not 8080."
+                    echo ""
+                    echo -e "  To fix your config:"
+                    echo -e "    1. Edit ${CYAN}~/.config/docker-local/config.json${NC}"
+                    echo -e "    2. Set ${CYAN}\"reverb\": { \"port\": 6001 }${NC}"
+                    echo -e "    3. Run ${CYAN}docker-local init --force${NC} again"
+                    echo ""
+                fi
+            fi
+
+            echo -e "  To fix external port conflicts:"
+            echo -e "    ${CYAN}ss -tlnp | grep :$port${NC}  ${DIM}# See what's using the port${NC}"
+            echo -e "    ${CYAN}sudo systemctl stop nginx mysql postgresql redis${NC}  ${DIM}# Stop common services${NC}"
         elif echo "$compose_output" | grep -q "container name.*already in use"; then
             local container=$(echo "$compose_output" | grep -oP 'name "/\K[^"]+' | head -1)
             echo -e "${YELLOW}  Container name conflict: $container${NC}"

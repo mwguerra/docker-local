@@ -37,5 +37,10 @@
   "xdebug": {
     "enabled": true,
     "mode": "develop,debug"
+  },
+  "reverb": {
+    "port": 6001,
+    "project_name": "myapp",
+    "scaling_enabled": false
   }
 }
