@@ -139,8 +139,8 @@ RUN wget -O /usr/local/bin/php-fpm-healthcheck \
     https://raw.githubusercontent.com/renatomefi/php-fpm-healthcheck/master/php-fpm-healthcheck \
     && chmod +x /usr/local/bin/php-fpm-healthcheck
 
-# Habilitar php-fpm status page para healthcheck
-RUN set -xe && echo "pm.status_path = /status" >> /usr/local/etc/php-fpm.d/zz-docker.conf
+# Habilitar php-fpm status page para healthcheck (must be in pool config, not global)
+RUN set -xe && echo "pm.status_path = /status" >> /usr/local/etc/php-fpm.d/www.conf
 
 # Criar grupo e usuário para evitar problemas de permissão
 RUN addgroup -g ${GID} laravel && \

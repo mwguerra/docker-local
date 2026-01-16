@@ -103,6 +103,7 @@ show_help() {
     echo -e "  ${GREEN}up${NC}                    Start Docker environment"
     echo -e "  ${GREEN}down${NC}                  Stop Docker environment"
     echo -e "  ${GREEN}restart${NC}               Restart Docker environment"
+    echo -e "  ${GREEN}rebuild${NC} <service...>  Rebuild Docker service(s)"
     echo -e "  ${GREEN}status${NC}                Show status of all services"
     echo -e "  ${GREEN}logs${NC} [service]        Show Docker logs"
     echo -e "  ${GREEN}update${NC}                Update Docker images and CLI"
@@ -3090,6 +3091,92 @@ cmd_restart() {
     echo -e "${GREEN}✓ Environment restarted${NC}"
 }
 
+cmd_rebuild() {
+    check_docker_running
+
+    # Require at least one service
+    if [ $# -eq 0 ]; then
+        echo -e "${RED}Error: No service specified${NC}"
+        echo -e "Usage: ${CYAN}docker-local rebuild <service...>${NC}"
+        echo ""
+        echo -e "Available services:"
+        docker_compose config --services 2>/dev/null | while read svc; do
+            echo -e "  ${GREEN}$svc${NC}"
+        done
+        exit 1
+    fi
+
+    local services=("$@")
+    local available_services
+    available_services=$(docker_compose config --services 2>/dev/null)
+
+    # Services that have Dockerfiles (can be built)
+    local buildable_services=("php" "reverb")
+
+    # Validate all services exist
+    for service in "${services[@]}"; do
+        if ! echo "$available_services" | grep -qx "$service"; then
+            echo -e "${RED}Error: Unknown service '$service'${NC}"
+            echo -e "Available services:"
+            echo "$available_services" | while read svc; do
+                echo -e "  ${GREEN}$svc${NC}"
+            done
+            exit 1
+        fi
+    done
+
+    local total=${#services[@]}
+    local current=0
+
+    echo -e "${WHITE}Rebuilding ${total} service(s)...${NC}"
+    echo ""
+
+    for service in "${services[@]}"; do
+        ((current++))
+        echo -e "${BLUE}[$current/$total] Rebuilding ${CYAN}$service${NC}${BLUE}...${NC}"
+
+        # Step 1: Stop the service
+        echo -e "  ${DIM}→ Stopping service...${NC}"
+        docker_compose stop "$service" 2>/dev/null
+
+        # Step 2: Remove the container
+        echo -e "  ${DIM}→ Removing container...${NC}"
+        docker_compose rm -f "$service" 2>/dev/null
+
+        # Step 3: Rebuild or pull depending on service type
+        if [[ " ${buildable_services[@]} " =~ " ${service} " ]]; then
+            # Buildable service - rebuild from Dockerfile
+            echo -e "  ${DIM}→ Rebuilding image (no cache)...${NC}"
+            if ! docker_compose build --no-cache "$service"; then
+                echo -e "${RED}✗ Failed to build $service${NC}"
+                exit 1
+            fi
+        else
+            # Image-based service - pull fresh image
+            echo -e "  ${DIM}→ Pulling latest image...${NC}"
+            if ! docker_compose pull "$service"; then
+                echo -e "${RED}✗ Failed to pull $service${NC}"
+                exit 1
+            fi
+        fi
+
+        # Step 4: Start the service
+        echo -e "  ${DIM}→ Starting service...${NC}"
+        if ! docker_compose up -d "$service"; then
+            echo -e "${RED}✗ Failed to start $service${NC}"
+            exit 1
+        fi
+
+        echo -e "  ${GREEN}✓ $service rebuilt${NC}"
+        echo ""
+    done
+
+    echo -e "${GREEN}✓ Rebuild complete!${NC}"
+    echo ""
+    echo -e "Run ${CYAN}docker-local status${NC} to verify services"
+    echo -e "Run ${CYAN}docker-local logs <service>${NC} to view logs"
+}
+
 cmd_status() {
     if [ -f "$PACKAGE_DIR/scripts/status.sh" ]; then
         bash "$PACKAGE_DIR/scripts/status.sh"
@@ -4187,6 +4274,7 @@ cmd_setup() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            # Direct value options
             --projects-path=*)
                 setting="projects_path"
                 value="${1#*=}"
@@ -4194,6 +4282,11 @@ cmd_setup() {
                 ;;
             --php-version=*)
                 setting="default_php_version"
+                value="${1#*=}"
+                shift
+                ;;
+            --mysql-version=*)
+                setting="mysql.version"
                 value="${1#*=}"
                 shift
                 ;;
@@ -4207,17 +4300,52 @@ cmd_setup() {
                 value="${1#*=}"
                 shift
                 ;;
+            --redis-port=*)
+                setting="redis.port"
+                value="${1#*=}"
+                shift
+                ;;
+            --reverb-port=*)
+                setting="reverb.port"
+                value="${1#*=}"
+                shift
+                ;;
+            --minio-api-port=*)
+                setting="minio.api_port"
+                value="${1#*=}"
+                shift
+                ;;
+            --minio-console-port=*)
+                setting="minio.console_port"
+                value="${1#*=}"
+                shift
+                ;;
+            --mailpit-web-port=*)
+                setting="mailpit.web_port"
+                value="${1#*=}"
+                shift
+                ;;
+            --mailpit-smtp-port=*)
+                setting="mailpit.smtp_port"
+                value="${1#*=}"
+                shift
+                ;;
             --editor=*)
                 setting="editor"
                 value="${1#*=}"
                 shift
                 ;;
+            # Interactive options
             projects-path|projects)
                 cmd_setup_projects_path
                 return
                 ;;
             php-version|php)
                 cmd_setup_php_version
+                return
+                ;;
+            mysql-version)
+                cmd_setup_mysql_version
                 return
                 ;;
             mysql-port)
@@ -4228,8 +4356,32 @@ cmd_setup() {
                 cmd_setup_postgres_port
                 return
                 ;;
+            redis-port)
+                cmd_setup_redis_port
+                return
+                ;;
+            reverb-port)
+                cmd_setup_reverb_port
+                return
+                ;;
+            minio-ports)
+                cmd_setup_minio_ports
+                return
+                ;;
+            mailpit-ports)
+                cmd_setup_mailpit_ports
+                return
+                ;;
             editor)
                 cmd_setup_editor
+                return
+                ;;
+            ports)
+                cmd_setup_ports_menu
+                return
+                ;;
+            versions)
+                cmd_setup_versions_menu
                 return
                 ;;
             --help|-h)
@@ -4255,62 +4407,121 @@ cmd_setup() {
 }
 
 cmd_setup_help() {
+    echo ""
     echo -e "${WHITE}Usage:${NC} docker-local setup [OPTION]"
     echo ""
     echo -e "${WHITE}Interactive mode:${NC}"
-    echo "  docker-local setup                    Show interactive settings menu"
-    echo "  docker-local setup projects-path      Change projects folder path"
-    echo "  docker-local setup php-version        Change default PHP version"
-    echo "  docker-local setup mysql-port         Change MySQL port"
-    echo "  docker-local setup postgres-port      Change PostgreSQL port"
-    echo "  docker-local setup editor             Change default editor"
+    echo -e "  ${GREEN}docker-local setup${NC}                    Show main settings menu"
+    echo -e "  ${GREEN}docker-local setup ports${NC}              Configure all port settings"
+    echo -e "  ${GREEN}docker-local setup versions${NC}           Configure version settings"
+    echo ""
+    echo -e "${WHITE}Individual settings:${NC}"
+    echo -e "  ${DIM}Paths${NC}"
+    echo -e "  ${GREEN}docker-local setup projects-path${NC}      Change projects folder"
+    echo ""
+    echo -e "  ${DIM}Versions${NC}"
+    echo -e "  ${GREEN}docker-local setup php-version${NC}        Change PHP version"
+    echo -e "  ${GREEN}docker-local setup mysql-version${NC}      Change MySQL version"
+    echo ""
+    echo -e "  ${DIM}Database Ports${NC}"
+    echo -e "  ${GREEN}docker-local setup mysql-port${NC}         Change MySQL port"
+    echo -e "  ${GREEN}docker-local setup postgres-port${NC}      Change PostgreSQL port"
+    echo -e "  ${GREEN}docker-local setup redis-port${NC}         Change Redis port"
+    echo ""
+    echo -e "  ${DIM}Service Ports${NC}"
+    echo -e "  ${GREEN}docker-local setup reverb-port${NC}        Change Reverb WebSocket port"
+    echo -e "  ${GREEN}docker-local setup minio-ports${NC}        Change MinIO ports"
+    echo -e "  ${GREEN}docker-local setup mailpit-ports${NC}      Change Mailpit ports"
+    echo ""
+    echo -e "  ${DIM}Tools${NC}"
+    echo -e "  ${GREEN}docker-local setup editor${NC}             Change default IDE/editor"
     echo ""
     echo -e "${WHITE}Direct mode (non-interactive):${NC}"
+    echo -e "  ${DIM}# Paths & Tools${NC}"
     echo "  docker-local setup --projects-path=/path/to/projects"
+    echo "  docker-local setup --editor=phpstorm"
+    echo ""
+    echo -e "  ${DIM}# Versions${NC}"
     echo "  docker-local setup --php-version=8.3"
+    echo "  docker-local setup --mysql-version=8.4"
+    echo ""
+    echo -e "  ${DIM}# Database Ports${NC}"
     echo "  docker-local setup --mysql-port=3307"
     echo "  docker-local setup --postgres-port=5433"
-    echo "  docker-local setup --editor=vim"
+    echo "  docker-local setup --redis-port=6380"
+    echo ""
+    echo -e "  ${DIM}# Service Ports${NC}"
+    echo "  docker-local setup --reverb-port=6002"
+    echo "  docker-local setup --minio-api-port=9002"
+    echo "  docker-local setup --minio-console-port=9003"
+    echo "  docker-local setup --mailpit-web-port=8026"
+    echo "  docker-local setup --mailpit-smtp-port=1026"
+    echo ""
 }
 
 cmd_setup_menu() {
+    # Load all current settings
     local projects_path=$(get_projects_dir)
     local php_version=$(get_nested_config "default_php_version" "8.4")
+    local mysql_version=$(get_nested_config "mysql.version" "9.1")
     local mysql_port=$(get_nested_config "mysql.port" "3306")
     local postgres_port=$(get_nested_config "postgres.port" "5432")
+    local redis_port=$(get_nested_config "redis.port" "6379")
+    local reverb_port=$(get_nested_config "reverb.port" "6001")
+    local minio_api_port=$(get_nested_config "minio.api_port" "9000")
+    local minio_console_port=$(get_nested_config "minio.console_port" "9001")
+    local mailpit_web_port=$(get_nested_config "mailpit.web_port" "8025")
+    local mailpit_smtp_port=$(get_nested_config "mailpit.smtp_port" "1025")
     local editor=$(get_nested_config "editor" "code")
 
     echo ""
-    echo -e "${WHITE}docker-local Setup${NC}"
-    echo "=================="
+    echo -e "${WHITE}┌─────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│                    docker-local Setup                       │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────────────────────────────┘${NC}"
     echo ""
-    echo -e "${DIM}Paths:${NC}"
-    echo -e "  1) Projects path          ${CYAN}$projects_path${NC}"
+    echo -e "${WHITE}  Paths${NC}"
+    echo -e "    ${GREEN}1)${NC} Projects directory      ${CYAN}$projects_path${NC}"
     echo ""
-    echo -e "${DIM}PHP:${NC}"
-    echo -e "  2) Default PHP version    ${CYAN}$php_version${NC}"
+    echo -e "${WHITE}  Versions${NC}"
+    echo -e "    ${GREEN}2)${NC} PHP version             ${CYAN}$php_version${NC}"
+    echo -e "    ${GREEN}3)${NC} MySQL version           ${CYAN}$mysql_version${NC}"
     echo ""
-    echo -e "${DIM}Database Ports:${NC}"
-    echo -e "  3) MySQL port             ${CYAN}$mysql_port${NC}"
-    echo -e "  4) PostgreSQL port        ${CYAN}$postgres_port${NC}"
+    echo -e "${WHITE}  Database Ports${NC}"
+    echo -e "    ${GREEN}4)${NC} MySQL port              ${CYAN}$mysql_port${NC}"
+    echo -e "    ${GREEN}5)${NC} PostgreSQL port         ${CYAN}$postgres_port${NC}"
+    echo -e "    ${GREEN}6)${NC} Redis port              ${CYAN}$redis_port${NC}"
     echo ""
-    echo -e "${DIM}Tools:${NC}"
-    echo -e "  5) Default editor         ${CYAN}$editor${NC}"
+    echo -e "${WHITE}  Service Ports${NC}"
+    echo -e "    ${GREEN}7)${NC} Reverb WebSocket port   ${CYAN}$reverb_port${NC}"
+    echo -e "    ${GREEN}8)${NC} MinIO ports             ${CYAN}API: $minio_api_port${NC} ${DIM}|${NC} ${CYAN}Console: $minio_console_port${NC}"
+    echo -e "    ${GREEN}9)${NC} Mailpit ports           ${CYAN}Web: $mailpit_web_port${NC} ${DIM}|${NC} ${CYAN}SMTP: $mailpit_smtp_port${NC}"
     echo ""
-    echo -e "  q) Quit"
+    echo -e "${WHITE}  Tools${NC}"
+    echo -e "   ${GREEN}10)${NC} Default editor          ${CYAN}$editor${NC}"
     echo ""
-    read -p "Select option: " choice
+    echo -e "    ${DIM}q) Quit${NC}"
+    echo ""
+    read -p "  Select option [1-10, q]: " choice
 
     case "$choice" in
         1) cmd_setup_projects_path ;;
         2) cmd_setup_php_version ;;
-        3) cmd_setup_mysql_port ;;
-        4) cmd_setup_postgres_port ;;
-        5) cmd_setup_editor ;;
-        q|Q) return 0 ;;
+        3) cmd_setup_mysql_version ;;
+        4) cmd_setup_mysql_port ;;
+        5) cmd_setup_postgres_port ;;
+        6) cmd_setup_redis_port ;;
+        7) cmd_setup_reverb_port ;;
+        8) cmd_setup_minio_ports ;;
+        9) cmd_setup_mailpit_ports ;;
+        10) cmd_setup_editor ;;
+        q|Q)
+            echo ""
+            return 0
+            ;;
         *)
-            echo -e "${RED}Invalid option${NC}"
-            exit 1
+            echo -e "${RED}  Invalid option. Please select 1-10 or q.${NC}"
+            sleep 1
+            cmd_setup_menu
             ;;
     esac
 }
@@ -4341,13 +4552,19 @@ cmd_setup_projects_path() {
     local current_path=$(get_projects_dir)
 
     echo ""
-    echo -e "${WHITE}Change Projects Path${NC}"
-    echo -e "Current: ${CYAN}$current_path${NC}"
+    echo -e "${WHITE}┌─────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│     Change Projects Directory       │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────┘${NC}"
     echo ""
-    read -p "Enter new projects path (or press Enter to keep current): " new_path
+    echo -e "  Current: ${CYAN}$current_path${NC}"
+    echo ""
+    echo -e "  ${DIM}This is where your Laravel projects are stored.${NC}"
+    echo -e "  ${DIM}You can use ~ for your home directory.${NC}"
+    echo ""
+    read -p "  Enter new path (Enter to keep current): " new_path
 
     if [ -z "$new_path" ]; then
-        echo -e "${YELLOW}No changes made.${NC}"
+        echo -e "  ${YELLOW}No changes made.${NC}"
         return 0
     fi
 
@@ -4356,16 +4573,16 @@ cmd_setup_projects_path() {
 
     # Validate path exists or offer to create
     if [ ! -d "$new_path" ]; then
-        read -p "Directory does not exist. Create it? [y/N] " -n 1 -r
+        read -p "  Directory does not exist. Create it? [y/N] " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
             mkdir -p "$new_path" || {
-                echo -e "${RED}Failed to create directory${NC}"
+                echo -e "  ${RED}Failed to create directory${NC}"
                 exit 1
             }
-            echo -e "${GREEN}✓ Created directory: $new_path${NC}"
+            echo -e "  ${GREEN}✓ Created directory: $new_path${NC}"
         else
-            echo -e "${YELLOW}Cancelled.${NC}"
+            echo -e "  ${YELLOW}Cancelled.${NC}"
             return 1
         fi
     fi
@@ -4383,15 +4600,22 @@ cmd_setup_php_version() {
     local current_version=$(get_nested_config "default_php_version" "8.4")
 
     echo ""
-    echo -e "${WHITE}Change Default PHP Version${NC}"
-    echo -e "Current: ${CYAN}$current_version${NC}"
+    echo -e "${WHITE}┌─────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│       Change PHP Version            │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────┘${NC}"
     echo ""
-    echo "Available versions: 8.1, 8.2, 8.3, 8.4"
+    echo -e "  Current: ${CYAN}$current_version${NC}"
     echo ""
-    read -p "Enter PHP version (or press Enter to keep current): " new_version
+    echo -e "  ${DIM}Available versions:${NC}"
+    echo -e "    ${GREEN}8.4${NC}       Latest (default)"
+    echo -e "    ${GREEN}8.3${NC}       PHP 8.3"
+    echo -e "    ${GREEN}8.2${NC}       PHP 8.2"
+    echo -e "    ${GREEN}8.1${NC}       PHP 8.1"
+    echo ""
+    read -p "  Enter PHP version (Enter to keep current): " new_version
 
     if [ -z "$new_version" ]; then
-        echo -e "${YELLOW}No changes made.${NC}"
+        echo -e "  ${YELLOW}No changes made.${NC}"
         return 0
     fi
 
@@ -4399,9 +4623,10 @@ cmd_setup_php_version() {
     case "$new_version" in
         8.1|8.2|8.3|8.4)
             cmd_setup_update_config "default_php_version" "$new_version"
+            echo -e "  ${YELLOW}Note: Run ${CYAN}docker-local rebuild php${NC}${YELLOW} to apply the new version.${NC}"
             ;;
         *)
-            echo -e "${RED}Invalid PHP version. Must be one of: 8.1, 8.2, 8.3, 8.4${NC}"
+            echo -e "  ${RED}Invalid PHP version. Must be one of: 8.1, 8.2, 8.3, 8.4${NC}"
             exit 1
             ;;
     esac
@@ -4411,19 +4636,22 @@ cmd_setup_mysql_port() {
     local current_port=$(get_nested_config "mysql.port" "3306")
 
     echo ""
-    echo -e "${WHITE}Change MySQL Port${NC}"
-    echo -e "Current: ${CYAN}$current_port${NC}"
+    echo -e "${WHITE}┌─────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│        Change MySQL Port            │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────┘${NC}"
     echo ""
-    read -p "Enter MySQL port (or press Enter to keep current): " new_port
+    echo -e "  Current: ${CYAN}$current_port${NC}"
+    echo -e "  ${DIM}Default: 3306${NC}"
+    echo ""
+    read -p "  Enter MySQL port (Enter to keep current): " new_port
 
     if [ -z "$new_port" ]; then
-        echo -e "${YELLOW}No changes made.${NC}"
+        echo -e "  ${YELLOW}No changes made.${NC}"
         return 0
     fi
 
-    # Validate port
     if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
-        echo -e "${RED}Invalid port number. Must be between 1 and 65535.${NC}"
+        echo -e "  ${RED}Invalid port number. Must be between 1 and 65535.${NC}"
         exit 1
     fi
 
@@ -4434,19 +4662,22 @@ cmd_setup_postgres_port() {
     local current_port=$(get_nested_config "postgres.port" "5432")
 
     echo ""
-    echo -e "${WHITE}Change PostgreSQL Port${NC}"
-    echo -e "Current: ${CYAN}$current_port${NC}"
+    echo -e "${WHITE}┌─────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│      Change PostgreSQL Port         │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────┘${NC}"
     echo ""
-    read -p "Enter PostgreSQL port (or press Enter to keep current): " new_port
+    echo -e "  Current: ${CYAN}$current_port${NC}"
+    echo -e "  ${DIM}Default: 5432${NC}"
+    echo ""
+    read -p "  Enter PostgreSQL port (Enter to keep current): " new_port
 
     if [ -z "$new_port" ]; then
-        echo -e "${YELLOW}No changes made.${NC}"
+        echo -e "  ${YELLOW}No changes made.${NC}"
         return 0
     fi
 
-    # Validate port
     if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
-        echo -e "${RED}Invalid port number. Must be between 1 and 65535.${NC}"
+        echo -e "  ${RED}Invalid port number. Must be between 1 and 65535.${NC}"
         exit 1
     fi
 
@@ -4457,19 +4688,276 @@ cmd_setup_editor() {
     local current_editor=$(get_nested_config "editor" "code")
 
     echo ""
-    echo -e "${WHITE}Change Default Editor${NC}"
-    echo -e "Current: ${CYAN}$current_editor${NC}"
+    echo -e "${WHITE}┌─────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│       Change Default Editor         │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────┘${NC}"
     echo ""
-    echo "Common options: code, vim, nvim, nano, subl, atom"
+    echo -e "  Current: ${CYAN}$current_editor${NC}"
     echo ""
-    read -p "Enter editor command (or press Enter to keep current): " new_editor
+    echo -e "  ${DIM}Common options:${NC}"
+    echo -e "    ${GREEN}code${NC}      VS Code"
+    echo -e "    ${GREEN}phpstorm${NC}  PhpStorm"
+    echo -e "    ${GREEN}vim${NC}       Vim"
+    echo -e "    ${GREEN}nvim${NC}      Neovim"
+    echo -e "    ${GREEN}subl${NC}      Sublime Text"
+    echo -e "    ${GREEN}nano${NC}      Nano"
+    echo ""
+    read -p "  Enter editor command (Enter to keep current): " new_editor
 
     if [ -z "$new_editor" ]; then
-        echo -e "${YELLOW}No changes made.${NC}"
+        echo -e "  ${YELLOW}No changes made.${NC}"
         return 0
     fi
 
     cmd_setup_update_config "editor" "$new_editor"
+}
+
+cmd_setup_mysql_version() {
+    local current_version=$(get_nested_config "mysql.version" "9.1")
+
+    echo ""
+    echo -e "${WHITE}┌─────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│       Change MySQL Version          │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e "  Current: ${CYAN}$current_version${NC}"
+    echo ""
+    echo -e "  ${DIM}Available versions:${NC}"
+    echo -e "    ${GREEN}9.1${NC}       Latest (default)"
+    echo -e "    ${GREEN}9.0${NC}       MySQL 9.0"
+    echo -e "    ${GREEN}8.4${NC}       LTS version"
+    echo -e "    ${GREEN}8.0${NC}       Legacy"
+    echo ""
+    read -p "  Enter MySQL version (Enter to keep current): " new_version
+
+    if [ -z "$new_version" ]; then
+        echo -e "  ${YELLOW}No changes made.${NC}"
+        return 0
+    fi
+
+    # Validate version format
+    if ! [[ "$new_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+        echo -e "  ${RED}Invalid version format. Use format like: 9.1, 8.4, 8.0${NC}"
+        exit 1
+    fi
+
+    cmd_setup_update_config "mysql.version" "$new_version"
+    echo -e "  ${YELLOW}Note: Run ${CYAN}docker-local rebuild mysql${NC}${YELLOW} to apply the new version.${NC}"
+}
+
+cmd_setup_redis_port() {
+    local current_port=$(get_nested_config "redis.port" "6379")
+
+    echo ""
+    echo -e "${WHITE}┌─────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│        Change Redis Port            │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e "  Current: ${CYAN}$current_port${NC}"
+    echo -e "  ${DIM}Default: 6379${NC}"
+    echo ""
+    read -p "  Enter Redis port (Enter to keep current): " new_port
+
+    if [ -z "$new_port" ]; then
+        echo -e "  ${YELLOW}No changes made.${NC}"
+        return 0
+    fi
+
+    if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
+        echo -e "  ${RED}Invalid port number. Must be between 1 and 65535.${NC}"
+        exit 1
+    fi
+
+    cmd_setup_update_config "redis.port" "$new_port"
+}
+
+cmd_setup_reverb_port() {
+    local current_port=$(get_nested_config "reverb.port" "6001")
+
+    echo ""
+    echo -e "${WHITE}┌─────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│     Change Reverb WebSocket Port    │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e "  Current: ${CYAN}$current_port${NC}"
+    echo -e "  ${DIM}Default: 6001${NC}"
+    echo ""
+    echo -e "  ${DIM}Note: This is the port Reverb listens on for WebSocket connections.${NC}"
+    echo ""
+    read -p "  Enter Reverb port (Enter to keep current): " new_port
+
+    if [ -z "$new_port" ]; then
+        echo -e "  ${YELLOW}No changes made.${NC}"
+        return 0
+    fi
+
+    if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
+        echo -e "  ${RED}Invalid port number. Must be between 1 and 65535.${NC}"
+        exit 1
+    fi
+
+    cmd_setup_update_config "reverb.port" "$new_port"
+}
+
+cmd_setup_minio_ports() {
+    local current_api_port=$(get_nested_config "minio.api_port" "9000")
+    local current_console_port=$(get_nested_config "minio.console_port" "9001")
+
+    echo ""
+    echo -e "${WHITE}┌─────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│        Change MinIO Ports           │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e "  ${WHITE}API Port${NC} (S3-compatible endpoint)"
+    echo -e "  Current: ${CYAN}$current_api_port${NC} ${DIM}(default: 9000)${NC}"
+    echo ""
+    read -p "  Enter API port (Enter to keep current): " new_api_port
+
+    if [ -n "$new_api_port" ]; then
+        if ! [[ "$new_api_port" =~ ^[0-9]+$ ]] || [ "$new_api_port" -lt 1 ] || [ "$new_api_port" -gt 65535 ]; then
+            echo -e "  ${RED}Invalid port number. Must be between 1 and 65535.${NC}"
+            exit 1
+        fi
+        cmd_setup_update_config "minio.api_port" "$new_api_port"
+    fi
+
+    echo ""
+    echo -e "  ${WHITE}Console Port${NC} (Web UI)"
+    echo -e "  Current: ${CYAN}$current_console_port${NC} ${DIM}(default: 9001)${NC}"
+    echo ""
+    read -p "  Enter Console port (Enter to keep current): " new_console_port
+
+    if [ -n "$new_console_port" ]; then
+        if ! [[ "$new_console_port" =~ ^[0-9]+$ ]] || [ "$new_console_port" -lt 1 ] || [ "$new_console_port" -gt 65535 ]; then
+            echo -e "  ${RED}Invalid port number. Must be between 1 and 65535.${NC}"
+            exit 1
+        fi
+        cmd_setup_update_config "minio.console_port" "$new_console_port"
+    fi
+
+    if [ -z "$new_api_port" ] && [ -z "$new_console_port" ]; then
+        echo -e "  ${YELLOW}No changes made.${NC}"
+    fi
+}
+
+cmd_setup_mailpit_ports() {
+    local current_web_port=$(get_nested_config "mailpit.web_port" "8025")
+    local current_smtp_port=$(get_nested_config "mailpit.smtp_port" "1025")
+
+    echo ""
+    echo -e "${WHITE}┌─────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│       Change Mailpit Ports          │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e "  ${WHITE}Web Port${NC} (Mail UI at http://mail.localhost)"
+    echo -e "  Current: ${CYAN}$current_web_port${NC} ${DIM}(default: 8025)${NC}"
+    echo ""
+    read -p "  Enter Web port (Enter to keep current): " new_web_port
+
+    if [ -n "$new_web_port" ]; then
+        if ! [[ "$new_web_port" =~ ^[0-9]+$ ]] || [ "$new_web_port" -lt 1 ] || [ "$new_web_port" -gt 65535 ]; then
+            echo -e "  ${RED}Invalid port number. Must be between 1 and 65535.${NC}"
+            exit 1
+        fi
+        cmd_setup_update_config "mailpit.web_port" "$new_web_port"
+    fi
+
+    echo ""
+    echo -e "  ${WHITE}SMTP Port${NC} (For sending mail)"
+    echo -e "  Current: ${CYAN}$current_smtp_port${NC} ${DIM}(default: 1025)${NC}"
+    echo ""
+    read -p "  Enter SMTP port (Enter to keep current): " new_smtp_port
+
+    if [ -n "$new_smtp_port" ]; then
+        if ! [[ "$new_smtp_port" =~ ^[0-9]+$ ]] || [ "$new_smtp_port" -lt 1 ] || [ "$new_smtp_port" -gt 65535 ]; then
+            echo -e "  ${RED}Invalid port number. Must be between 1 and 65535.${NC}"
+            exit 1
+        fi
+        cmd_setup_update_config "mailpit.smtp_port" "$new_smtp_port"
+    fi
+
+    if [ -z "$new_web_port" ] && [ -z "$new_smtp_port" ]; then
+        echo -e "  ${YELLOW}No changes made.${NC}"
+    fi
+}
+
+cmd_setup_ports_menu() {
+    local mysql_port=$(get_nested_config "mysql.port" "3306")
+    local postgres_port=$(get_nested_config "postgres.port" "5432")
+    local redis_port=$(get_nested_config "redis.port" "6379")
+    local reverb_port=$(get_nested_config "reverb.port" "6001")
+    local minio_api_port=$(get_nested_config "minio.api_port" "9000")
+    local minio_console_port=$(get_nested_config "minio.console_port" "9001")
+    local mailpit_web_port=$(get_nested_config "mailpit.web_port" "8025")
+    local mailpit_smtp_port=$(get_nested_config "mailpit.smtp_port" "1025")
+
+    echo ""
+    echo -e "${WHITE}┌─────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│                    Port Configuration                       │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e "${WHITE}  Database Ports${NC}"
+    echo -e "    ${GREEN}1)${NC} MySQL port              ${CYAN}$mysql_port${NC}"
+    echo -e "    ${GREEN}2)${NC} PostgreSQL port         ${CYAN}$postgres_port${NC}"
+    echo -e "    ${GREEN}3)${NC} Redis port              ${CYAN}$redis_port${NC}"
+    echo ""
+    echo -e "${WHITE}  Service Ports${NC}"
+    echo -e "    ${GREEN}4)${NC} Reverb WebSocket port   ${CYAN}$reverb_port${NC}"
+    echo -e "    ${GREEN}5)${NC} MinIO ports             ${CYAN}API: $minio_api_port${NC} ${DIM}|${NC} ${CYAN}Console: $minio_console_port${NC}"
+    echo -e "    ${GREEN}6)${NC} Mailpit ports           ${CYAN}Web: $mailpit_web_port${NC} ${DIM}|${NC} ${CYAN}SMTP: $mailpit_smtp_port${NC}"
+    echo ""
+    echo -e "    ${DIM}b) Back to main menu${NC}"
+    echo ""
+    read -p "  Select option [1-6, b]: " choice
+
+    case "$choice" in
+        1) cmd_setup_mysql_port ;;
+        2) cmd_setup_postgres_port ;;
+        3) cmd_setup_redis_port ;;
+        4) cmd_setup_reverb_port ;;
+        5) cmd_setup_minio_ports ;;
+        6) cmd_setup_mailpit_ports ;;
+        b|B)
+            echo ""
+            cmd_setup_menu
+            ;;
+        *)
+            echo -e "${RED}  Invalid option.${NC}"
+            sleep 1
+            cmd_setup_ports_menu
+            ;;
+    esac
+}
+
+cmd_setup_versions_menu() {
+    local php_version=$(get_nested_config "default_php_version" "8.4")
+    local mysql_version=$(get_nested_config "mysql.version" "9.1")
+
+    echo ""
+    echo -e "${WHITE}┌─────────────────────────────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│                   Version Configuration                     │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e "    ${GREEN}1)${NC} PHP version             ${CYAN}$php_version${NC}"
+    echo -e "    ${GREEN}2)${NC} MySQL version           ${CYAN}$mysql_version${NC}"
+    echo ""
+    echo -e "    ${DIM}b) Back to main menu${NC}"
+    echo ""
+    read -p "  Select option [1-2, b]: " choice
+
+    case "$choice" in
+        1) cmd_setup_php_version ;;
+        2) cmd_setup_mysql_version ;;
+        b|B)
+            echo ""
+            cmd_setup_menu
+            ;;
+        *)
+            echo -e "${RED}  Invalid option.${NC}"
+            sleep 1
+            cmd_setup_versions_menu
+            ;;
+    esac
 }
 
 cmd_setup_dns() {
@@ -4924,6 +5412,7 @@ case "$1" in
     up) cmd_up ;;
     down) cmd_down ;;
     restart) cmd_restart ;;
+    rebuild) shift; cmd_rebuild "$@" ;;
     status) cmd_status ;;
     logs) shift; cmd_logs "$@" ;;
     ports) cmd_ports ;;
