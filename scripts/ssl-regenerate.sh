@@ -51,6 +51,28 @@ echo ""
 # Install CA root if not already installed
 echo -e "${YELLOW}Installing mkcert CA root (if needed)...${NC}"
 mkcert -install
+
+# Fix NSS database trust flags if needed (Chrome/Chromium)
+if [ -d "$HOME/.pki/nssdb" ] && command -v certutil &> /dev/null; then
+    # Get the CA certificate name from NSS database
+    CA_NAME=$(certutil -L -d sql:$HOME/.pki/nssdb 2>/dev/null | grep "mkcert" | sed 's/\s*[A-Z,]*$//' | sed 's/\s*$//')
+
+    if [ -n "$CA_NAME" ]; then
+        # Check current trust flags
+        CURRENT_FLAGS=$(certutil -L -d sql:$HOME/.pki/nssdb 2>/dev/null | grep "mkcert" | awk '{print $NF}')
+
+        # If not trusted for SSL (missing T flag), fix it
+        if [[ "$CURRENT_FLAGS" != *"CT"* ]] && [[ "$CURRENT_FLAGS" != "C,,"* || "$CURRENT_FLAGS" == "C,," ]]; then
+            echo -e "  ${YELLOW}→ Fixing NSS database trust flags...${NC}"
+            # Delete the existing entry
+            certutil -D -d sql:$HOME/.pki/nssdb -n "$CA_NAME" 2>/dev/null || true
+            # Add it back with correct trust flags
+            certutil -A -d sql:$HOME/.pki/nssdb -n "$CA_NAME" -t "CT,C,C" -i "$(mkcert -CAROOT)/rootCA.pem" 2>/dev/null
+            echo -e "  ${GREEN}✓ NSS database trust flags fixed${NC}"
+        fi
+    fi
+fi
+
 echo -e "${GREEN}✓ CA root installed${NC}"
 echo ""
 
