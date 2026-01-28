@@ -123,7 +123,7 @@ show_help() {
     echo -e "  ${GREEN}list${NC}                  List all Laravel projects (recursive)"
     echo -e "  ${GREEN}make:laravel${NC} <name>   Create new Laravel project"
     echo -e "  ${GREEN}clone${NC} <repo>          Clone and setup existing project"
-    echo -e "  ${GREEN}open${NC} [name|--mail]    Open project/service in browser"
+    echo -e "  ${GREEN}open${NC} [name|service]   Open project/service in browser (--mail, --minio, --traefik, --livekit)"
     echo -e "  ${GREEN}ide${NC} [code|phpstorm]   Open project in IDE"
     echo -e "  ${GREEN}env:check${NC}             Verify .env (services, prefixes, conflicts)"
     echo -e "  ${GREEN}env:check --all${NC}       Audit ALL projects for conflicts"
@@ -393,6 +393,8 @@ check_init_conflicts() {
     # Define ports to check (service:port:name)
     # Include configurable ports from environment
     local reverb_port="${REVERB_PORT:-6001}"
+    local livekit_port="${LIVEKIT_PORT:-7880}"
+    local livekit_rtc_port="${LIVEKIT_RTC_TCP_PORT:-7881}"
 
     local services=(
         "traefik:80:Traefik (HTTP)"
@@ -406,6 +408,8 @@ check_init_conflicts() {
         "mailpit:${MAILPIT_SMTP_PORT:-1025}:Mailpit SMTP"
         "mailpit:${MAILPIT_WEB_PORT:-8025}:Mailpit Web"
         "reverb:${reverb_port}:Reverb WebSocket"
+        "livekit:${livekit_port}:LiveKit API"
+        "livekit:${livekit_rtc_port}:LiveKit RTC"
     )
 
     echo -e "${BLUE}[Pre-flight] Checking for conflicts...${NC}"
@@ -420,7 +424,7 @@ check_init_conflicts() {
     done
 
     # Check container name conflicts (non-docker-local containers)
-    local containers=("traefik" "mysql" "postgres" "redis" "minio" "minio-setup" "mailpit" "nginx" "php" "reverb" "node" "whisper" "rtmp")
+    local containers=("traefik" "mysql" "postgres" "redis" "minio" "minio-setup" "mailpit" "nginx" "php" "reverb" "livekit" "node" "whisper" "rtmp")
     for container in "${containers[@]}"; do
         if check_container_exists "$container"; then
             # Check if it's from a different compose project
@@ -933,6 +937,10 @@ cmd_open() {
             url="https://traefik.localhost"
             echo -e "${BLUE}Opening Traefik Dashboard...${NC}"
             ;;
+        --livekit|livekit)
+            url="https://livekit.localhost"
+            echo -e "${BLUE}Opening LiveKit API...${NC}"
+            ;;
         --redis|redis|--redis-commander)
             echo -e "${YELLOW}Redis CLI: ${CYAN}docker-local db:redis${NC}"
             return
@@ -942,7 +950,7 @@ cmd_open() {
             local project_name=$(get_current_project)
             if [ -z "$project_name" ]; then
                 echo -e "${RED}Error: Not in a project directory${NC}"
-                echo -e "Usage: docker-local open [project-name|--mail|--minio|--traefik]"
+                echo -e "Usage: docker-local open [project-name|--mail|--minio|--traefik|--livekit]"
                 exit 1
             fi
             url="https://$project_name.test"
@@ -2671,7 +2679,7 @@ _docker_local_completions() {
     case "$prev" in
         open)
             local projects=$(ls -1 ~/projects 2>/dev/null | tr '\n' ' ')
-            COMPREPLY=($(compgen -W "$projects --mail --minio --traefik" -- "$cur"))
+            COMPREPLY=($(compgen -W "$projects --mail --minio --traefik --livekit" -- "$cur"))
             ;;
         ide)
             COMPREPLY=($(compgen -W "code phpstorm sublime" -- "$cur"))

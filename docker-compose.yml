@@ -106,18 +106,18 @@ services:
         condition: service_healthy
     labels:
       - "traefik.enable=true"
-      # Rota principal para *.localhost
-      - "traefik.http.routers.nginx.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.localhost`)"
+      # Rota principal para *.localhost (Traefik v3 syntax)
+      - "traefik.http.routers.nginx.rule=HostRegexp(`^[a-z0-9-]+\\.localhost$$`)"
       - "traefik.http.routers.nginx.entrypoints=websecure"
       - "traefik.http.routers.nginx.tls=true"
       - "traefik.http.routers.nginx.priority=1"
-      # Rota para *.test (domínio customizado)
-      - "traefik.http.routers.nginx-test.rule=HostRegexp(`{subdomain:[a-z0-9-]+}.test`)"
+      # Rota para *.test (domínio customizado - Traefik v3 syntax)
+      - "traefik.http.routers.nginx-test.rule=HostRegexp(`^[a-z0-9-]+\\.test$$`)"
       - "traefik.http.routers.nginx-test.entrypoints=websecure"
       - "traefik.http.routers.nginx-test.tls=true"
       - "traefik.http.routers.nginx-test.priority=1"
-      # Rota para subdomínios: *.projeto.test
-      - "traefik.http.routers.nginx-subdomains.rule=HostRegexp(`{sub:[a-z0-9-]+}.{project:[a-z0-9-]+}.test`)"
+      # Rota para subdomínios: *.projeto.test (Traefik v3 syntax)
+      - "traefik.http.routers.nginx-subdomains.rule=HostRegexp(`^[a-z0-9-]+\\.[a-z0-9-]+\\.test$$`)"
       - "traefik.http.routers.nginx-subdomains.entrypoints=websecure"
       - "traefik.http.routers.nginx-subdomains.tls=true"
       - "traefik.http.routers.nginx-subdomains.priority=2"
@@ -458,6 +458,45 @@ services:
       - "traefik.http.middlewares.reverb-headers.headers.customrequestheaders.Connection=Upgrade"
       - "traefik.http.middlewares.reverb-headers.headers.customrequestheaders.Upgrade=websocket"
       - "traefik.http.routers.reverb.middlewares=reverb-headers"
+
+  # ============================================================================
+  # LiveKit - WebRTC SFU Server for Video Conferencing
+  # API: http://livekit:7880 (internal) / http://localhost:7880 (external)
+  # RTC: Connect via WebRTC SDK using API key/secret
+  # Documentation: https://docs.livekit.io
+  # ============================================================================
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: livekit
+    restart: unless-stopped
+    ports:
+      - "${LIVEKIT_PORT:-7880}:7880"           # HTTP API
+      - "${LIVEKIT_RTC_TCP_PORT:-7881}:7881"   # RTC over TCP
+      - "${LIVEKIT_UDP_START:-50000}-${LIVEKIT_UDP_END:-50100}:50000-50100/udp"  # UDP for WebRTC
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:-devkey}: ${LIVEKIT_API_SECRET:-secret}"
+    command: >
+      --dev
+      --bind 0.0.0.0
+      --port 7880
+      --rtc.tcp_port 7881
+      --rtc.port_range_start 50000
+      --rtc.port_range_end 50100
+    networks:
+      - laravel-dev
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:7880/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    labels:
+      - "traefik.enable=true"
+      # LiveKit API route
+      - "traefik.http.routers.livekit.rule=Host(`livekit.localhost`)"
+      - "traefik.http.routers.livekit.entrypoints=websecure"
+      - "traefik.http.routers.livekit.tls=true"
+      - "traefik.http.services.livekit.loadbalancer.server.port=7880"
 
 volumes:
   mysql_data:
