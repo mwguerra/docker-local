@@ -97,6 +97,7 @@ LOCALHOST_DOMAINS=(
     "s3.localhost"
     "whisper.localhost"
     "stream.localhost"
+    "ws.localhost"
 )
 echo -e "    ${DIM}+ traefik.localhost, mail.localhost, minio.localhost, ...${NC}"
 mkcert -cert-file "$CERTS_DIR/localhost.crt" \
