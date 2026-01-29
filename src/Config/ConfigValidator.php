@@ -53,6 +53,14 @@ class ConfigValidator
             'app_secret' => 'string',
             'scaling_enabled' => 'boolean',
         ],
+        'livekit' => [
+            'port' => 'integer',
+            'rtc_tcp_port' => 'integer',
+            'udp_start' => 'integer',
+            'udp_end' => 'integer',
+            'api_key' => 'string',
+            'api_secret' => 'string',
+        ],
     ];
 
     /**
@@ -151,6 +159,8 @@ class ConfigValidator
             'mailpit.web_port',
             'mailpit.smtp_port',
             'reverb.port',
+            'livekit.port',
+            'livekit.rtc_tcp_port',
         ];
 
         foreach ($portKeys as $key) {
@@ -186,6 +196,8 @@ class ConfigValidator
             'mailpit.web_port' => 'Mailpit Web',
             'mailpit.smtp_port' => 'Mailpit SMTP',
             'reverb.port' => 'Reverb WebSocket',
+            'livekit.port' => 'LiveKit API',
+            'livekit.rtc_tcp_port' => 'LiveKit RTC TCP',
         ];
 
         foreach ($portKeys as $key => $name) {

@@ -258,6 +258,14 @@ class ConfigManager
                 'app_secret' => 'my-app-secret',
                 'scaling_enabled' => false,
             ],
+            'livekit' => [
+                'port' => 7880,
+                'rtc_tcp_port' => 7881,
+                'udp_start' => 50000,
+                'udp_end' => 50100,
+                'api_key' => 'devkey',
+                'api_secret' => 'secret',
+            ],
         ];
 
         $this->loaded = true;

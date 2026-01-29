@@ -175,6 +175,19 @@ show_help() {
     echo -e "  ${GREEN}startup${NC} disable       Disable startup on boot"
     echo -e "  ${GREEN}startup${NC} status        Show startup status"
     echo ""
+    echo -e "${WHITE}Reverb Commands:${NC}"
+    echo -e "  ${GREEN}reverb${NC}                Manage Reverb WebSocket server"
+    echo -e "  ${GREEN}reverb status${NC}         Show server status and apps"
+    echo -e "  ${GREEN}reverb restart${NC}        Restart server"
+    echo -e "  ${GREEN}reverb app:add${NC} <name> Register a new app"
+    echo -e "  ${GREEN}reverb app:list${NC}       List all registered apps"
+    echo ""
+    echo -e "${WHITE}LiveKit Commands:${NC}"
+    echo -e "  ${GREEN}livekit${NC}               Manage LiveKit WebRTC server"
+    echo -e "  ${GREEN}livekit status${NC}        Show server status and credentials"
+    echo -e "  ${GREEN}livekit restart${NC}       Restart server"
+    echo -e "  ${GREEN}livekit token${NC} <room>  Generate access token for room"
+    echo ""
     echo -e "${WHITE}Other Commands:${NC}"
     echo -e "  ${GREEN}shell${NC}                 Open PHP container shell"
     echo -e "  ${GREEN}config${NC}                Show configuration"
@@ -1799,6 +1812,178 @@ cmd_reverb_app_remove() {
     echo -e "${GREEN}✓ App '$app_name' removed${NC}"
     echo ""
     echo -e "${DIM}Restart Reverb to apply: docker-local reverb restart${NC}"
+}
+
+# ==============================================================================
+# LiveKit WebRTC Server Management
+# ==============================================================================
+
+cmd_livekit() {
+    local subcommand="${1:-}"
+    shift 2>/dev/null || true
+
+    case "$subcommand" in
+        ""|help)
+            echo ""
+            echo -e "${WHITE}LiveKit WebRTC Server (Video Conferencing)${NC}"
+            echo ""
+            echo "Commands:"
+            echo "  ${CYAN}livekit status${NC}              - Show server status and credentials"
+            echo "  ${CYAN}livekit restart${NC}             - Restart server"
+            echo "  ${CYAN}livekit logs${NC}                - View server logs"
+            echo "  ${CYAN}livekit token <room> [name]${NC} - Generate access token"
+            echo ""
+            echo "Configuration:"
+            echo "  API Key:    ${LIVEKIT_API_KEY:-devkey}"
+            echo "  API Secret: ${LIVEKIT_API_SECRET:-secret}"
+            echo "  Port:       ${LIVEKIT_PORT:-7880}"
+            echo ""
+            echo "URLs:"
+            echo "  • https://livekit.localhost     - LiveKit API (via Traefik)"
+            echo "  • http://localhost:7880         - LiveKit API (direct)"
+            echo ""
+            ;;
+        status)
+            cmd_livekit_status
+            ;;
+        restart)
+            cmd_livekit_restart
+            ;;
+        logs)
+            docker logs -f livekit
+            ;;
+        token)
+            cmd_livekit_token "$@"
+            ;;
+        *)
+            echo -e "${RED}Unknown command: $subcommand${NC}"
+            echo "Run 'docker-local livekit' for help"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_livekit_status() {
+    echo ""
+    echo -e "${WHITE}LiveKit WebRTC Server Status${NC}"
+    echo ""
+
+    # Check container status
+    printf "  Server: "
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^livekit$"; then
+        local health=$(docker inspect --format='{{.State.Health.Status}}' livekit 2>/dev/null || echo "unknown")
+        if [ "$health" = "healthy" ]; then
+            echo -e "${GREEN}● Running (healthy)${NC}"
+        elif [ "$health" = "starting" ]; then
+            echo -e "${YELLOW}● Starting${NC}"
+        else
+            echo -e "${GREEN}● Running${NC}"
+        fi
+    else
+        echo -e "${RED}○ Stopped${NC}"
+        echo ""
+        echo -e "Start with: ${CYAN}docker-local up${NC}"
+        return 1
+    fi
+
+    # Test connectivity
+    printf "  API:    "
+    if timeout 2 bash -c '</dev/tcp/127.0.0.1/7880' 2>/dev/null; then
+        echo -e "${GREEN}✓ Accessible${NC} (localhost:${LIVEKIT_PORT:-7880})"
+    else
+        echo -e "${YELLOW}○ Not accessible${NC}"
+    fi
+
+    # Show credentials
+    echo ""
+    echo -e "${WHITE}Credentials:${NC}"
+    echo "  API Key:    ${LIVEKIT_API_KEY:-devkey}"
+    echo "  API Secret: ${LIVEKIT_API_SECRET:-secret}"
+
+    # Show URLs
+    echo ""
+    echo -e "${WHITE}URLs:${NC}"
+    echo "  • https://livekit.localhost     - Via Traefik (HTTPS/WSS)"
+    echo "  • http://localhost:7880         - Direct access"
+    echo "  • RTC TCP: localhost:${LIVEKIT_RTC_TCP_PORT:-7881}"
+    echo "  • RTC UDP: localhost:${LIVEKIT_UDP_START:-50000}-${LIVEKIT_UDP_END:-50100}"
+
+    # Show .env configuration hints
+    echo ""
+    echo -e "${WHITE}Laravel .env Configuration:${NC}"
+    echo "  LIVEKIT_HOST=http://livekit:7880"
+    echo "  LIVEKIT_CLIENT_URL=wss://livekit.localhost"
+    echo "  LIVEKIT_API_KEY=${LIVEKIT_API_KEY:-devkey}"
+    echo "  LIVEKIT_API_SECRET=${LIVEKIT_API_SECRET:-secret}"
+    echo ""
+}
+
+cmd_livekit_restart() {
+    echo -e "${BLUE}Restarting LiveKit server...${NC}"
+    docker restart livekit > /dev/null 2>&1
+
+    # Wait for healthy
+    echo -n "  Waiting for server..."
+    local attempts=0
+    while [ $attempts -lt 30 ]; do
+        if timeout 2 bash -c '</dev/tcp/127.0.0.1/7880' 2>/dev/null; then
+            echo -e " ${GREEN}✓${NC}"
+            echo -e "${GREEN}✓ LiveKit restarted${NC}"
+            return 0
+        fi
+        echo -n "."
+        sleep 1
+        ((attempts++))
+    done
+    echo -e " ${RED}✗${NC}"
+    echo -e "${RED}✗ Timeout waiting for LiveKit${NC}"
+    return 1
+}
+
+cmd_livekit_token() {
+    local room_name="${1:-}"
+    local participant_name="${2:-participant}"
+
+    if [ -z "$room_name" ]; then
+        echo -e "${RED}Error: Room name is required${NC}"
+        echo ""
+        echo "Usage: docker-local livekit token <room-name> [participant-name]"
+        echo ""
+        echo "Example: docker-local livekit token my-room JohnDoe"
+        return 1
+    fi
+
+    # Check if livekit-cli is available in the container
+    if ! docker exec livekit which lk &>/dev/null; then
+        echo -e "${YELLOW}Note: LiveKit CLI not available in container.${NC}"
+        echo ""
+        echo "To generate tokens, use the LiveKit SDK in your application:"
+        echo ""
+        echo -e "${CYAN}PHP Example:${NC}"
+        echo '  use Agence104\LiveKit\AccessToken;'
+        echo '  use Agence104\LiveKit\VideoGrant;'
+        echo ''
+        echo "  \$token = (new AccessToken())"
+        echo "      ->setApiKey('${LIVEKIT_API_KEY:-devkey}')"
+        echo "      ->setApiSecret('${LIVEKIT_API_SECRET:-secret}')"
+        echo "      ->setIdentity('${participant_name}')"
+        echo "      ->setGrant((new VideoGrant())->setRoomJoin(true)->setRoom('${room_name}'));"
+        echo ''
+        echo "  echo \$token->toJwt();"
+        echo ""
+        echo -e "${CYAN}Or install livekit-cli:${NC}"
+        echo "  brew install livekit-cli  # macOS"
+        echo "  go install github.com/livekit/livekit-cli/cmd/livekit-cli@latest  # Go"
+        return 0
+    fi
+
+    # Generate token using livekit-cli
+    docker exec livekit lk token create \
+        --api-key "${LIVEKIT_API_KEY:-devkey}" \
+        --api-secret "${LIVEKIT_API_SECRET:-secret}" \
+        --join --room "$room_name" \
+        --identity "$participant_name" \
+        --valid-for 24h
 }
 
 # ==============================================================================
@@ -5494,6 +5679,12 @@ case "$1" in
     reverb:app:list) cmd_reverb_app_list ;;
     reverb:app:show) shift; cmd_reverb_app_show "$@" ;;
     reverb:app:remove) shift; cmd_reverb_app_remove "$@" ;;
+
+    # LiveKit
+    livekit) shift; cmd_livekit "$@" ;;
+    livekit:status) cmd_livekit_status ;;
+    livekit:restart) cmd_livekit_restart ;;
+    livekit:token) shift; cmd_livekit_token "$@" ;;
 
     # Xdebug
     xdebug) shift; cmd_xdebug "$@" ;;

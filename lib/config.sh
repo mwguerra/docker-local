@@ -228,6 +228,14 @@ load_env() {
     export REVERB_APP_SECRET=$(get_nested_config "reverb.app_secret" "my-app-secret")
     export REVERB_SCALING_ENABLED=$(get_nested_config "reverb.scaling_enabled" "false")
 
+    # Load LiveKit settings
+    export LIVEKIT_PORT=$(get_nested_config "livekit.port" "7880")
+    export LIVEKIT_RTC_TCP_PORT=$(get_nested_config "livekit.rtc_tcp_port" "7881")
+    export LIVEKIT_UDP_START=$(get_nested_config "livekit.udp_start" "50000")
+    export LIVEKIT_UDP_END=$(get_nested_config "livekit.udp_end" "50100")
+    export LIVEKIT_API_KEY=$(get_nested_config "livekit.api_key" "devkey")
+    export LIVEKIT_API_SECRET=$(get_nested_config "livekit.api_secret" "secret")
+
     # Load user settings (using DOCKER_ prefix to avoid readonly UID/GID)
     export DOCKER_UID="${DOCKER_UID:-$(id -u)}"
     export DOCKER_GID="${DOCKER_GID:-$(id -g)}"

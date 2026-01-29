@@ -497,6 +497,10 @@ services:
       - "traefik.http.routers.livekit.entrypoints=websecure"
       - "traefik.http.routers.livekit.tls=true"
       - "traefik.http.services.livekit.loadbalancer.server.port=7880"
+      # WebSocket headers for proper upgrade (LiveKit uses WebSocket for signaling)
+      - "traefik.http.middlewares.livekit-headers.headers.customrequestheaders.Connection=Upgrade"
+      - "traefik.http.middlewares.livekit-headers.headers.customrequestheaders.Upgrade=websocket"
+      - "traefik.http.routers.livekit.middlewares=livekit-headers"
 
 volumes:
   mysql_data:
