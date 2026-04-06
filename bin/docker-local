@@ -423,6 +423,7 @@ check_init_conflicts() {
         "reverb:${reverb_port}:Reverb WebSocket"
         "livekit:${livekit_port}:LiveKit API"
         "livekit:${livekit_rtc_port}:LiveKit RTC"
+        "ollama:${OLLAMA_PORT:-11434}:Ollama API"
     )
 
     echo -e "${BLUE}[Pre-flight] Checking for conflicts...${NC}"
@@ -437,7 +438,7 @@ check_init_conflicts() {
     done
 
     # Check container name conflicts (non-docker-local containers)
-    local containers=("traefik" "mysql" "postgres" "redis" "minio" "minio-setup" "mailpit" "nginx" "php" "reverb" "livekit" "node" "whisper" "rtmp")
+    local containers=("traefik" "mysql" "postgres" "redis" "minio" "minio-setup" "mailpit" "nginx" "php" "reverb" "livekit" "node" "whisper" "rtmp" "ollama")
     for container in "${containers[@]}"; do
         if check_container_exists "$container"; then
             # Check if it's from a different compose project
