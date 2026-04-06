@@ -42,5 +42,8 @@
     "port": 6001,
     "project_name": "myapp",
     "scaling_enabled": false
+  },
+  "ollama": {
+    "port": 11434
   }
 }

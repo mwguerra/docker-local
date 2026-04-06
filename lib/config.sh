@@ -236,6 +236,9 @@ load_env() {
     export LIVEKIT_API_KEY=$(get_nested_config "livekit.api_key" "devkey")
     export LIVEKIT_API_SECRET=$(get_nested_config "livekit.api_secret" "secret")
 
+    # Load Ollama settings
+    export OLLAMA_PORT=$(get_nested_config "ollama.port" "11434")
+
     # Load user settings (using DOCKER_ prefix to avoid readonly UID/GID)
     export DOCKER_UID="${DOCKER_UID:-$(id -u)}"
     export DOCKER_GID="${DOCKER_GID:-$(id -g)}"
