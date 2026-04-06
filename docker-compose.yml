@@ -502,6 +502,51 @@ services:
       - "traefik.http.middlewares.livekit-headers.headers.customrequestheaders.Upgrade=websocket"
       - "traefik.http.routers.livekit.middlewares=livekit-headers"
 
+  # ============================================================================
+  # Ollama - Local AI/LLM Inference Server (CPU-only)
+  # API: http://ollama:11434 (internal) / http://localhost:11434 (external)
+  # Models auto-pulled on first start: nomic-embed-text, llama3.2:3b, llava
+  # Documentation: https://github.com/ollama/ollama
+  # ============================================================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    environment:
+      OLLAMA_HOST: "0.0.0.0"
+      OLLAMA_NUM_PARALLEL: "1"
+      OLLAMA_MAX_LOADED_MODELS: "1"
+    volumes:
+      - ollama_data:/root/.ollama
+    networks:
+      - laravel-dev
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        until ollama list >/dev/null 2>&1; do sleep 1; done
+        echo 'Ollama server ready, pulling models...'
+        for model in nomic-embed-text llama3.2:3b llava; do
+          echo "Pulling $$model..."
+          ollama pull "$$model"
+        done
+        echo 'All models pulled.'
+        wait
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.ollama.rule=Host(`ollama.localhost`)"
+      - "traefik.http.routers.ollama.entrypoints=websecure"
+      - "traefik.http.routers.ollama.tls=true"
+      - "traefik.http.services.ollama.loadbalancer.server.port=11434"
+
 volumes:
   mysql_data:
     name: laravel-dev-mysql
@@ -521,3 +566,5 @@ volumes:
     name: laravel-dev-whisper-cache
   reverb_vendor:
     name: laravel-dev-reverb-vendor
+  ollama_data:
+    name: laravel-dev-ollama
