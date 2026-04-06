@@ -188,6 +188,12 @@ show_help() {
     echo -e "  ${GREEN}livekit restart${NC}       Restart server"
     echo -e "  ${GREEN}livekit token${NC} <room>  Generate access token for room"
     echo ""
+    echo -e "${WHITE}Ollama Commands:${NC}"
+    echo -e "  ${GREEN}ollama${NC}                Manage Ollama AI server"
+    echo -e "  ${GREEN}ollama status${NC}         Show server status and models"
+    echo -e "  ${GREEN}ollama pull${NC} <model>   Pull/update a model"
+    echo -e "  ${GREEN}ollama models${NC}         List available models"
+    echo ""
     echo -e "${WHITE}Other Commands:${NC}"
     echo -e "  ${GREEN}shell${NC}                 Open PHP container shell"
     echo -e "  ${GREEN}config${NC}                Show configuration"
@@ -955,6 +961,10 @@ cmd_open() {
             url="https://livekit.localhost"
             echo -e "${BLUE}Opening LiveKit API...${NC}"
             ;;
+        --ollama|ollama)
+            url="https://ollama.localhost"
+            echo -e "${BLUE}Opening Ollama API...${NC}"
+            ;;
         --redis|redis|--redis-commander)
             echo -e "${YELLOW}Redis CLI: ${CYAN}docker-local db:redis${NC}"
             return
@@ -964,7 +974,7 @@ cmd_open() {
             local project_name=$(get_current_project)
             if [ -z "$project_name" ]; then
                 echo -e "${RED}Error: Not in a project directory${NC}"
-                echo -e "Usage: docker-local open [project-name|--mail|--minio|--traefik|--livekit]"
+                echo -e "Usage: docker-local open [project-name|--mail|--minio|--traefik|--livekit|--ollama]"
                 exit 1
             fi
             url="https://$project_name.test"
@@ -1988,6 +1998,162 @@ cmd_livekit_token() {
 }
 
 # ==============================================================================
+# Ollama AI Server Management
+# ==============================================================================
+
+cmd_ollama() {
+    local subcommand="${1:-}"
+    shift 2>/dev/null || true
+
+    case "$subcommand" in
+        ""|help)
+            echo ""
+            echo -e "${WHITE}Ollama AI Server (Local LLM Inference)${NC}"
+            echo ""
+            echo "Commands:"
+            echo "  ${CYAN}ollama status${NC}              - Show server status and loaded models"
+            echo "  ${CYAN}ollama restart${NC}             - Restart server"
+            echo "  ${CYAN}ollama logs${NC}                - View server logs"
+            echo "  ${CYAN}ollama pull <model>${NC}        - Pull/update a model"
+            echo "  ${CYAN}ollama models${NC}              - List available models"
+            echo ""
+            echo "Configuration:"
+            echo "  Port: ${OLLAMA_PORT:-11434}"
+            echo "  Mode: CPU-only"
+            echo ""
+            echo "URLs:"
+            echo "  * https://ollama.localhost     - Ollama API (via Traefik)"
+            echo "  * http://localhost:${OLLAMA_PORT:-11434}         - Ollama API (direct)"
+            echo ""
+            ;;
+        status)
+            cmd_ollama_status
+            ;;
+        restart)
+            cmd_ollama_restart
+            ;;
+        logs)
+            docker logs -f ollama
+            ;;
+        pull)
+            cmd_ollama_pull "$@"
+            ;;
+        models)
+            cmd_ollama_models
+            ;;
+        *)
+            echo -e "${RED}Unknown command: $subcommand${NC}"
+            echo "Run 'docker-local ollama' for help"
+            exit 1
+            ;;
+    esac
+}
+
+cmd_ollama_status() {
+    echo ""
+    echo -e "${WHITE}Ollama AI Server Status${NC}"
+    echo ""
+
+    # Check container status
+    printf "  Server: "
+    if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^ollama$"; then
+        local health=$(docker inspect --format='{{.State.Health.Status}}' ollama 2>/dev/null || echo "unknown")
+        if [ "$health" = "healthy" ]; then
+            echo -e "${GREEN}● Running (healthy)${NC}"
+        elif [ "$health" = "starting" ]; then
+            echo -e "${YELLOW}● Starting${NC}"
+        else
+            echo -e "${GREEN}● Running${NC}"
+        fi
+    else
+        echo -e "${RED}○ Stopped${NC}"
+        echo ""
+        echo -e "Start with: ${CYAN}docker-local up${NC}"
+        return 1
+    fi
+
+    # Test connectivity
+    printf "  API:    "
+    if timeout 2 bash -c "</dev/tcp/127.0.0.1/${OLLAMA_PORT:-11434}" 2>/dev/null; then
+        echo -e "${GREEN}✓ Accessible${NC} (localhost:${OLLAMA_PORT:-11434})"
+    else
+        echo -e "${YELLOW}○ Not accessible${NC}"
+    fi
+
+    # Show models
+    echo ""
+    echo -e "${WHITE}Models:${NC}"
+    docker exec ollama ollama list 2>/dev/null || echo "  (no models loaded yet)"
+
+    # Show URLs
+    echo ""
+    echo -e "${WHITE}URLs:${NC}"
+    echo "  * https://ollama.localhost     - Via Traefik (HTTPS)"
+    echo "  * http://localhost:${OLLAMA_PORT:-11434}         - Direct access"
+
+    # Show .env configuration hints
+    echo ""
+    echo -e "${WHITE}Laravel .env Configuration:${NC}"
+    echo "  OLLAMA_BASE_URL=http://ollama:11434"
+    echo ""
+}
+
+cmd_ollama_restart() {
+    echo -e "${BLUE}Restarting Ollama server...${NC}"
+    docker restart ollama > /dev/null 2>&1
+
+    # Wait for healthy
+    echo -n "  Waiting for server..."
+    local attempts=0
+    while [ $attempts -lt 30 ]; do
+        if timeout 2 bash -c "</dev/tcp/127.0.0.1/${OLLAMA_PORT:-11434}" 2>/dev/null; then
+            echo -e " ${GREEN}✓${NC}"
+            echo -e "${GREEN}✓ Ollama restarted${NC}"
+            return 0
+        fi
+        echo -n "."
+        sleep 2
+        ((attempts++))
+    done
+    echo -e " ${RED}✗${NC}"
+    echo -e "${RED}✗ Timeout waiting for Ollama${NC}"
+    return 1
+}
+
+cmd_ollama_pull() {
+    local model_name="${1:-}"
+
+    if [ -z "$model_name" ]; then
+        echo -e "${RED}Error: Model name is required${NC}"
+        echo ""
+        echo "Usage: docker-local ollama pull <model-name>"
+        echo ""
+        echo "Examples:"
+        echo "  docker-local ollama pull mistral"
+        echo "  docker-local ollama pull codellama:7b"
+        echo "  docker-local ollama pull phi3"
+        return 1
+    fi
+
+    echo -e "${BLUE}Pulling model: $model_name${NC}"
+    docker exec -it ollama ollama pull "$model_name"
+}
+
+cmd_ollama_models() {
+    if ! docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^ollama$"; then
+        echo -e "${RED}Ollama is not running${NC}"
+        echo -e "Start with: ${CYAN}docker-local up${NC}"
+        return 1
+    fi
+
+    echo ""
+    echo -e "${WHITE}Ollama Models:${NC}"
+    echo ""
+    docker exec ollama ollama list
+    echo ""
+}
+
+# ==============================================================================
 # XDEBUG Toggle
 # ==============================================================================
 
@@ -2860,12 +3026,12 @@ _docker_local_completions() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
     
-    local commands="init doctor up down restart status logs update clean list make:laravel clone open ide env:check make:env update:env tinker test require logs:laravel new:model new:controller new:migration new:seeder new:factory new:request new:resource new:middleware new:event new:job new:mail new:command db:mysql db:postgres db:redis db:create db:dump db:restore db:fresh queue:work queue:restart queue:failed queue:retry queue:clear xdebug shell config completion self-update help setup:hosts setup:dns setup:system"
+    local commands="init doctor up down restart status logs update clean list make:laravel clone open ide env:check make:env update:env tinker test require logs:laravel new:model new:controller new:migration new:seeder new:factory new:request new:resource new:middleware new:event new:job new:mail new:command db:mysql db:postgres db:redis db:create db:dump db:restore db:fresh queue:work queue:restart queue:failed queue:retry queue:clear xdebug ollama ollama:status ollama:restart ollama:pull ollama:models shell config completion self-update help setup:hosts setup:dns setup:system"
     
     case "$prev" in
         open)
             local projects=$(ls -1 ~/projects 2>/dev/null | tr '\n' ' ')
-            COMPREPLY=($(compgen -W "$projects --mail --minio --traefik --livekit" -- "$cur"))
+            COMPREPLY=($(compgen -W "$projects --mail --minio --traefik --livekit --ollama" -- "$cur"))
             ;;
         ide)
             COMPREPLY=($(compgen -W "code phpstorm sublime" -- "$cur"))
@@ -5686,6 +5852,13 @@ case "$1" in
     livekit:status) cmd_livekit_status ;;
     livekit:restart) cmd_livekit_restart ;;
     livekit:token) shift; cmd_livekit_token "$@" ;;
+
+    # Ollama
+    ollama) shift; cmd_ollama "$@" ;;
+    ollama:status) cmd_ollama_status ;;
+    ollama:restart) cmd_ollama_restart ;;
+    ollama:pull) shift; cmd_ollama_pull "$@" ;;
+    ollama:models) cmd_ollama_models ;;
 
     # Xdebug
     xdebug) shift; cmd_xdebug "$@" ;;
