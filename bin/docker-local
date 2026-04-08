@@ -123,7 +123,7 @@ show_help() {
     echo -e "  ${GREEN}list${NC}                  List all Laravel projects (recursive)"
     echo -e "  ${GREEN}make:laravel${NC} <name>   Create new Laravel project"
     echo -e "  ${GREEN}clone${NC} <repo>          Clone and setup existing project"
-    echo -e "  ${GREEN}open${NC} [name|service]   Open project/service in browser (--mail, --minio, --traefik, --livekit)"
+    echo -e "  ${GREEN}open${NC} [name|service]   Open project/service in browser (--mail, --minio, --traefik, --livekit, --ollama)"
     echo -e "  ${GREEN}ide${NC} [code|phpstorm]   Open project in IDE"
     echo -e "  ${GREEN}env:check${NC}             Verify .env (services, prefixes, conflicts)"
     echo -e "  ${GREEN}env:check --all${NC}       Audit ALL projects for conflicts"

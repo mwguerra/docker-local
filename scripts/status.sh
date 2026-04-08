@@ -72,6 +72,7 @@ check_service "Mailpit" "mailpit" "latest"
 check_service "MinIO" "minio" "latest"
 check_service "Reverb" "reverb" "WS"
 check_service "LiveKit" "livekit" "SFU"
+check_service "Ollama" "ollama" "LLM"
 
 echo ""
 echo -e "${YELLOW}Versões Detalhadas:${NC}"
@@ -177,6 +178,18 @@ else
     echo -e "${RED}✗ Não disponível${NC}"
 fi
 
+# Test Ollama
+printf "  Ollama:     "
+if docker ps --format '{{.Names}}' | grep -q "^ollama$"; then
+    if timeout 2 bash -c '</dev/tcp/127.0.0.1/11434' 2>/dev/null; then
+        echo -e "${GREEN}✓ Conectado${NC} (ollama:11434)"
+    else
+        echo -e "${YELLOW}○ Starting${NC} (ollama:11434)"
+    fi
+else
+    echo -e "${RED}✗ Não disponível${NC}"
+fi
+
 echo ""
 echo -e "${YELLOW}Extensões PHP Instaladas:${NC}"
 echo ""
@@ -195,6 +208,7 @@ echo "  • https://minio.localhost       - MinIO Console"
 echo "  • https://s3.localhost          - MinIO API (S3)"
 echo "  • wss://ws.localhost            - Reverb WebSocket"
 echo "  • https://livekit.localhost     - LiveKit API (WebRTC SFU)"
+echo "  • https://ollama.localhost     - Ollama API (LLM Inference)"
 echo "  • https://meuprojeto.test       - Seu projeto Laravel"
 echo ""
 echo -e "${YELLOW}Portas Locais:${NC}"
@@ -212,5 +226,6 @@ echo "  │ Mailpit Web │ localhost:8025   │ -                           │
 echo "  │ Reverb WS   │ localhost:6001   │ app-id/key/secret in .env   │"
 echo "  │ LiveKit API │ localhost:7880   │ devkey / secret             │"
 echo "  │ LiveKit RTC │ localhost:7881   │ TCP + UDP 50000-50100       │"
+echo "  │ Ollama API  │ localhost:11434 │ no auth                     │"
 echo "  └─────────────┴──────────────────┴─────────────────────────────┘"
 echo ""
