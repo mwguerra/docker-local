@@ -3026,7 +3026,7 @@ _docker_local_completions() {
     local cur="${COMP_WORDS[COMP_CWORD]}"
     local prev="${COMP_WORDS[COMP_CWORD-1]}"
     
-    local commands="init doctor up down restart status logs update clean list make:laravel clone open ide env:check make:env update:env tinker test require logs:laravel new:model new:controller new:migration new:seeder new:factory new:request new:resource new:middleware new:event new:job new:mail new:command db:mysql db:postgres db:redis db:create db:dump db:restore db:fresh queue:work queue:restart queue:failed queue:retry queue:clear xdebug ollama ollama:status ollama:restart ollama:pull ollama:models shell config completion self-update help setup:hosts setup:dns setup:system"
+    local commands="init doctor fix up down restart rebuild status logs ports update clean setup park link list make:laravel clone open ide env:check env:audit make:env update:env show:env tinker test require logs:laravel new:model new:controller new:migration new:seeder new:factory new:request new:resource new:middleware new:event new:job new:mail new:command db:mysql db:postgres db:redis db:create db:dump db:restore db:fresh queue:work queue:restart queue:failed queue:retry queue:clear xdebug reverb reverb:status reverb:restart reverb:app:add reverb:app:list livekit livekit:status livekit:restart livekit:token ollama ollama:status ollama:restart ollama:pull ollama:models startup shell config completion self-update help setup:hosts setup:dns setup:system ssl:status ssl:regenerate"
     
     case "$prev" in
         open)
@@ -3046,7 +3046,10 @@ _docker_local_completions() {
             COMPREPLY=($(compgen -W "bash zsh" -- "$cur"))
             ;;
         logs)
-            COMPREPLY=($(compgen -W "mysql postgres redis minio mailpit traefik nginx php" -- "$cur"))
+            COMPREPLY=($(compgen -W "mysql postgres redis minio mailpit traefik nginx php reverb livekit ollama whisper" -- "$cur"))
+            ;;
+        rebuild)
+            COMPREPLY=($(compgen -W "php reverb traefik nginx mysql postgres redis minio mailpit livekit ollama whisper rtmp node" -- "$cur"))
             ;;
         *)
             COMPREPLY=($(compgen -W "$commands" -- "$cur"))
@@ -3100,6 +3103,13 @@ _docker_local() {
         'queue\:failed:List failed jobs'
         'queue\:retry:Retry failed jobs'
         'xdebug:Toggle Xdebug'
+        'reverb:Manage Reverb WebSocket server'
+        'livekit:Manage LiveKit WebRTC server'
+        'ollama:Manage Ollama AI server'
+        'ollama\:status:Show Ollama status'
+        'ollama\:restart:Restart Ollama server'
+        'ollama\:pull:Pull a model'
+        'ollama\:models:List models'
         'shell:Open PHP container shell'
         'config:Show configuration'
         'help:Show help'
