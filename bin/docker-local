@@ -3893,7 +3893,7 @@ cmd_env_check() {
     # ══════════════════════════════════════════════════════════════════════════
     echo -e "${WHITE}┌─ System: /etc/hosts ─────────────────────────────────────────────┐${NC}"
     local hosts_ok=true
-    for host in mysql postgres redis minio mailpit; do
+    for host in mysql postgres redis minio mailpit ollama; do
         if grep -q "127.0.0.1.*\b$host\b" /etc/hosts 2>/dev/null; then
             echo -e "  ${GREEN}✓${NC} $host → 127.0.0.1"
         else

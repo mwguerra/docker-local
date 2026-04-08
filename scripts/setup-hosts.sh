@@ -21,7 +21,7 @@ source "$PACKAGE_DIR/lib/config.sh"
 CYAN='\033[0;36m'
 
 HOSTS_FILE="/etc/hosts"
-HOSTS_ENTRY="127.0.0.1 mysql postgres redis minio mailpit"
+HOSTS_ENTRY="127.0.0.1 mysql postgres redis minio mailpit ollama"
 
 # ==============================================================================
 # Verificar se está rodando como root
@@ -59,7 +59,7 @@ fi
 
 # Verificar se hosts individuais já existem (configuração parcial)
 EXISTING_HOSTS=""
-for host in mysql postgres redis minio mailpit; do
+for host in mysql postgres redis minio mailpit ollama; do
     if grep -q "127.0.0.1.*\b$host\b" "$HOSTS_FILE" 2>/dev/null; then
         EXISTING_HOSTS="$EXISTING_HOSTS $host"
     fi
@@ -98,7 +98,7 @@ echo -e "${BLUE}Testing hostname resolution...${NC}"
 echo ""
 
 ALL_OK=true
-for host in mysql postgres redis minio mailpit; do
+for host in mysql postgres redis minio mailpit ollama; do
     if ping -c 1 -W 1 "$host" > /dev/null 2>&1; then
         echo -e "  ${GREEN}✓${NC} $host → 127.0.0.1"
     else
