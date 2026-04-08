@@ -4920,7 +4920,7 @@ cmd_setup_update_config() {
 
         # Show restart warning for settings that require it
         case "$key" in
-            mysql.port|postgres.port|projects_path)
+            mysql.port|postgres.port|ollama.port|reverb.port|projects_path)
                 echo -e "${YELLOW}Note: Restart docker-local services for changes to take effect.${NC}"
                 echo -e "  Run: ${CYAN}docker-local restart${NC}"
                 ;;
@@ -5461,6 +5461,9 @@ cmd_config() {
     echo -e "  Redis:      ${CYAN}localhost:${REDIS_PORT:-6379}${NC}"
     echo -e "  MinIO:      ${CYAN}localhost:${MINIO_API_PORT:-9000}${NC} (API) / ${CYAN}${MINIO_CONSOLE_PORT:-9001}${NC} (Console)"
     echo -e "  Mailpit:    ${CYAN}localhost:${MAILPIT_SMTP_PORT:-1025}${NC} (SMTP) / ${CYAN}${MAILPIT_WEB_PORT:-8025}${NC} (Web)"
+    echo -e "  Reverb:     ${CYAN}localhost:${REVERB_PORT:-6001}${NC}"
+    echo -e "  LiveKit:    ${CYAN}localhost:${LIVEKIT_PORT:-7880}${NC}"
+    echo -e "  Ollama:     ${CYAN}localhost:${OLLAMA_PORT:-11434}${NC}"
     echo ""
 }
 
