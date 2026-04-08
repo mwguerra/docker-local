@@ -17,8 +17,8 @@
 
 set -e
 
-# Get the package directory (where this script is located)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Get the package directory (resolve symlinks so sudo works via /usr/local/bin)
+SCRIPT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 PACKAGE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Source the configuration helper
