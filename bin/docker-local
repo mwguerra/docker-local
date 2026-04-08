@@ -2315,7 +2315,7 @@ cmd_doctor() {
     # Services
     echo -e "${WHITE}Services:${NC}"
     
-    local services=("mysql:MySQL:${MYSQL_PORT:-3306}" "postgres:PostgreSQL:${POSTGRES_PORT:-5432}" "redis:Redis:${REDIS_PORT:-6379}" "minio:MinIO:${MINIO_API_PORT:-9000}" "mailpit:Mailpit:${MAILPIT_SMTP_PORT:-1025}" "traefik:Traefik:443" "nginx:Nginx:80" "php:PHP-FPM:-")
+    local services=("mysql:MySQL:${MYSQL_PORT:-3306}" "postgres:PostgreSQL:${POSTGRES_PORT:-5432}" "redis:Redis:${REDIS_PORT:-6379}" "minio:MinIO:${MINIO_API_PORT:-9000}" "mailpit:Mailpit:${MAILPIT_SMTP_PORT:-1025}" "traefik:Traefik:443" "nginx:Nginx:80" "php:PHP-FPM:-" "ollama:Ollama:${OLLAMA_PORT:-11434}")
     
     for service_info in "${services[@]}"; do
         IFS=':' read -r container name port <<< "$service_info"
@@ -3286,6 +3286,7 @@ cmd_init() {
                 9001) conflicting_service="MinIO Console" ;;
                 1025) conflicting_service="Mailpit SMTP" ;;
                 8025) conflicting_service="Mailpit Web" ;;
+                11434) conflicting_service="Ollama API" ;;
             esac
 
             echo -e "${YELLOW}  Port conflict detected on port ${CYAN}$port${NC}"
@@ -3345,7 +3346,7 @@ cmd_init() {
     sleep 5  # Give containers more time to become healthy
 
     local all_healthy=true
-    for service in mysql postgres redis minio mailpit traefik; do
+    for service in mysql postgres redis minio mailpit traefik ollama; do
         local status=$(docker inspect "$service" --format '{{.State.Health.Status}}' 2>/dev/null || echo "unknown")
         local running=$(docker inspect "$service" --format '{{.State.Running}}' 2>/dev/null || echo "false")
 
