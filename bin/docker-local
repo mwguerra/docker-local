@@ -4698,6 +4698,11 @@ cmd_setup() {
                 value="${1#*=}"
                 shift
                 ;;
+            --ollama-port=*)
+                setting="ollama.port"
+                value="${1#*=}"
+                shift
+                ;;
             --editor=*)
                 setting="editor"
                 value="${1#*=}"
@@ -4738,6 +4743,10 @@ cmd_setup() {
                 ;;
             mailpit-ports)
                 cmd_setup_mailpit_ports
+                return
+                ;;
+            ollama-port)
+                cmd_setup_ollama_port
                 return
                 ;;
             editor)
@@ -4800,6 +4809,7 @@ cmd_setup_help() {
     echo -e "  ${GREEN}docker-local setup reverb-port${NC}        Change Reverb WebSocket port"
     echo -e "  ${GREEN}docker-local setup minio-ports${NC}        Change MinIO ports"
     echo -e "  ${GREEN}docker-local setup mailpit-ports${NC}      Change Mailpit ports"
+    echo -e "  ${GREEN}docker-local setup ollama-port${NC}        Change Ollama API port"
     echo ""
     echo -e "  ${DIM}Tools${NC}"
     echo -e "  ${GREEN}docker-local setup editor${NC}             Change default IDE/editor"
@@ -4824,6 +4834,7 @@ cmd_setup_help() {
     echo "  docker-local setup --minio-console-port=9003"
     echo "  docker-local setup --mailpit-web-port=8026"
     echo "  docker-local setup --mailpit-smtp-port=1026"
+    echo "  docker-local setup --ollama-port=11435"
     echo ""
 }
 
@@ -4840,6 +4851,7 @@ cmd_setup_menu() {
     local minio_console_port=$(get_nested_config "minio.console_port" "9001")
     local mailpit_web_port=$(get_nested_config "mailpit.web_port" "8025")
     local mailpit_smtp_port=$(get_nested_config "mailpit.smtp_port" "1025")
+    local ollama_port=$(get_nested_config "ollama.port" "11434")
     local editor=$(get_nested_config "editor" "code")
 
     echo ""
@@ -4863,13 +4875,14 @@ cmd_setup_menu() {
     echo -e "    ${GREEN}7)${NC} Reverb WebSocket port   ${CYAN}$reverb_port${NC}"
     echo -e "    ${GREEN}8)${NC} MinIO ports             ${CYAN}API: $minio_api_port${NC} ${DIM}|${NC} ${CYAN}Console: $minio_console_port${NC}"
     echo -e "    ${GREEN}9)${NC} Mailpit ports           ${CYAN}Web: $mailpit_web_port${NC} ${DIM}|${NC} ${CYAN}SMTP: $mailpit_smtp_port${NC}"
+    echo -e "   ${GREEN}10)${NC} Ollama API port        ${CYAN}$ollama_port${NC}"
     echo ""
     echo -e "${WHITE}  Tools${NC}"
-    echo -e "   ${GREEN}10)${NC} Default editor          ${CYAN}$editor${NC}"
+    echo -e "   ${GREEN}11)${NC} Default editor          ${CYAN}$editor${NC}"
     echo ""
     echo -e "    ${DIM}q) Quit${NC}"
     echo ""
-    read -p "  Select option [1-10, q]: " choice
+    read -p "  Select option [1-11, q]: " choice
 
     case "$choice" in
         1) cmd_setup_projects_path ;;
@@ -4881,13 +4894,14 @@ cmd_setup_menu() {
         7) cmd_setup_reverb_port ;;
         8) cmd_setup_minio_ports ;;
         9) cmd_setup_mailpit_ports ;;
-        10) cmd_setup_editor ;;
+        10) cmd_setup_ollama_port ;;
+        11) cmd_setup_editor ;;
         q|Q)
             echo ""
             return 0
             ;;
         *)
-            echo -e "${RED}  Invalid option. Please select 1-10 or q.${NC}"
+            echo -e "${RED}  Invalid option. Please select 1-11 or q.${NC}"
             sleep 1
             cmd_setup_menu
             ;;
@@ -5167,6 +5181,34 @@ cmd_setup_reverb_port() {
     cmd_setup_update_config "reverb.port" "$new_port"
 }
 
+cmd_setup_ollama_port() {
+    local current_port=$(get_nested_config "ollama.port" "11434")
+
+    echo ""
+    echo -e "${WHITE}┌─────────────────────────────────────┐${NC}"
+    echo -e "${WHITE}│     Change Ollama API Port          │${NC}"
+    echo -e "${WHITE}└─────────────────────────────────────┘${NC}"
+    echo ""
+    echo -e "  Current: ${CYAN}$current_port${NC}"
+    echo -e "  ${DIM}Default: 11434${NC}"
+    echo ""
+    echo -e "  ${DIM}Note: This is the port Ollama listens on for AI inference requests.${NC}"
+    echo ""
+    read -p "  Enter Ollama port (Enter to keep current): " new_port
+
+    if [ -z "$new_port" ]; then
+        echo -e "  ${YELLOW}No changes made.${NC}"
+        return 0
+    fi
+
+    if ! [[ "$new_port" =~ ^[0-9]+$ ]] || [ "$new_port" -lt 1 ] || [ "$new_port" -gt 65535 ]; then
+        echo -e "  ${RED}Invalid port number. Must be between 1 and 65535.${NC}"
+        exit 1
+    fi
+
+    cmd_setup_update_config "ollama.port" "$new_port"
+}
+
 cmd_setup_minio_ports() {
     local current_api_port=$(get_nested_config "minio.api_port" "9000")
     local current_console_port=$(get_nested_config "minio.console_port" "9001")
@@ -5258,6 +5300,7 @@ cmd_setup_ports_menu() {
     local minio_console_port=$(get_nested_config "minio.console_port" "9001")
     local mailpit_web_port=$(get_nested_config "mailpit.web_port" "8025")
     local mailpit_smtp_port=$(get_nested_config "mailpit.smtp_port" "1025")
+    local ollama_port=$(get_nested_config "ollama.port" "11434")
 
     echo ""
     echo -e "${WHITE}┌─────────────────────────────────────────────────────────────┐${NC}"
@@ -5273,10 +5316,11 @@ cmd_setup_ports_menu() {
     echo -e "    ${GREEN}4)${NC} Reverb WebSocket port   ${CYAN}$reverb_port${NC}"
     echo -e "    ${GREEN}5)${NC} MinIO ports             ${CYAN}API: $minio_api_port${NC} ${DIM}|${NC} ${CYAN}Console: $minio_console_port${NC}"
     echo -e "    ${GREEN}6)${NC} Mailpit ports           ${CYAN}Web: $mailpit_web_port${NC} ${DIM}|${NC} ${CYAN}SMTP: $mailpit_smtp_port${NC}"
+    echo -e "    ${GREEN}7)${NC} Ollama API port        ${CYAN}$ollama_port${NC}"
     echo ""
     echo -e "    ${DIM}b) Back to main menu${NC}"
     echo ""
-    read -p "  Select option [1-6, b]: " choice
+    read -p "  Select option [1-7, b]: " choice
 
     case "$choice" in
         1) cmd_setup_mysql_port ;;
@@ -5285,6 +5329,7 @@ cmd_setup_ports_menu() {
         4) cmd_setup_reverb_port ;;
         5) cmd_setup_minio_ports ;;
         6) cmd_setup_mailpit_ports ;;
+        7) cmd_setup_ollama_port ;;
         b|B)
             echo ""
             cmd_setup_menu
