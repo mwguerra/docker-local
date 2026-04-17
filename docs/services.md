@@ -307,6 +307,101 @@ MAIL_FROM_NAME="${APP_NAME}"
 
 ---
 
+## Ollama (Local LLM Inference)
+
+### Container Details
+
+- **Image:** `ollama/ollama:latest`
+- **Container:** `ollama`
+- **Port:** 11434 (host) → 11434 (container)
+- **URL (internal):** `http://ollama:11434`
+- **URL (host):** `http://localhost:11434`
+- **URL (Traefik):** `https://ollama.localhost`
+
+### Pre-pulled Models
+
+On first start, the container pulls:
+- `nomic-embed-text` — 768-dim embeddings (OpenAI-compatible `/v1/embeddings`)
+- `llama3.2:3b` — small, fast general-purpose chat model
+- `llava` — vision-capable multimodal model
+
+### OpenAI-compatible endpoint
+
+Ollama exposes an OpenAI-compatible API at `/v1/*`. This lets you reuse any OpenAI SDK (including Laravel AI SDK's `openai` driver) pointed at `http://ollama:11434/v1` — useful for embeddings and chat when the target SDK doesn't have a native Ollama driver.
+
+### CLI
+
+```bash
+docker exec ollama ollama pull <model>
+docker exec ollama ollama list
+docker exec ollama ollama run <model> "hello"
+```
+
+---
+
+## Whisper ASR (Speech-to-Text)
+
+### Container Details
+
+- **Image:** `fedirz/faster-whisper-server:latest-cpu`
+- **Container:** `whisper`
+- **Port:** 9501 (host) → 8000 (container)
+- **URL (internal):** `http://whisper:8000`
+- **URL (host):** `http://localhost:9501`
+- **URL (Traefik):** `https://whisper.localhost`
+- **Docs UI:** `http://localhost:9501/docs`
+
+### OpenAI-compatible endpoint
+
+Exposes `/v1/audio/transcriptions` (OpenAI-compatible). Laravel AI SDK's `openai` driver works as-is when `OPENAI_URL` is pointed at `http://whisper:8000/v1`.
+
+### Example
+
+```bash
+curl -X POST http://localhost:9501/v1/audio/transcriptions \
+  -F "file=@audio.mp3" \
+  -F "model=Systran/faster-whisper-base" \
+  -F "response_format=json"
+```
+
+### Model selection
+
+`.env` — `WHISPER_MODEL=Systran/faster-whisper-{tiny,base,small,medium,large-v3}`.
+Larger models are more accurate but slower. `base` is a good default.
+
+---
+
+## tusd (Resumable uploads)
+
+### Container Details
+
+- **Image:** `tusproject/tusd:latest`
+- **Container:** `tusd`
+- **Port:** 1080 (host) → 1080 (container)
+- **URL (internal):** `http://tusd:1080`
+- **URL (host):** `http://localhost:1080`
+- **URL (Traefik):** `https://tusd.localhost`
+- **Base path:** `/files/`
+
+### Backing store
+
+tusd writes chunks directly to MinIO (S3-compatible) at `http://minio:9000`, using `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` for auth. Target bucket defaults to `TUSD_S3_BUCKET=laravel`; override per-project via `.env`.
+
+### Client wiring
+
+```js
+// Uppy.js
+new Uppy().use(Tus, { endpoint: 'http://localhost:1080/files/' })
+```
+
+Upload IDs returned by tusd can be persisted in your application to locate the final S3 object.
+
+### Authorization (optional)
+
+Use `-hooks-http=http://<your-app>/tus/hooks` to validate each pre-create request against your Laravel app (user identity, bucket prefix, plan limits). Omitted in the default docker-local config — uploads are unauthenticated inside the dev environment.
+
+---
+
 ## Traefik 3.6 (Reverse Proxy)
 
 ### Container Details

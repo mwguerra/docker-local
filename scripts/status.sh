@@ -73,6 +73,8 @@ check_service "MinIO" "minio" "latest"
 check_service "Reverb" "reverb" "WS"
 check_service "LiveKit" "livekit" "SFU"
 check_service "Ollama" "ollama" "LLM"
+check_service "Whisper" "whisper" "ASR"
+check_service "tusd" "tusd" "TUS"
 
 echo ""
 echo -e "${YELLOW}Versões Detalhadas:${NC}"
@@ -190,6 +192,30 @@ else
     echo -e "${RED}✗ Não disponível${NC}"
 fi
 
+# Test Whisper (faster-whisper-server, OpenAI-compatible /v1/audio/transcriptions)
+printf "  Whisper:    "
+if docker ps --format '{{.Names}}' | grep -q "^whisper$"; then
+    if timeout 2 bash -c '</dev/tcp/127.0.0.1/9501' 2>/dev/null; then
+        echo -e "${GREEN}✓ Conectado${NC} (whisper:8000 → localhost:9501)"
+    else
+        echo -e "${YELLOW}○ Starting${NC} (whisper:8000)"
+    fi
+else
+    echo -e "${RED}✗ Não disponível${NC}"
+fi
+
+# Test tusd (resumable uploads → MinIO)
+printf "  tusd:       "
+if docker ps --format '{{.Names}}' | grep -q "^tusd$"; then
+    if timeout 2 bash -c '</dev/tcp/127.0.0.1/1080' 2>/dev/null; then
+        echo -e "${GREEN}✓ Conectado${NC} (tusd:1080)"
+    else
+        echo -e "${YELLOW}○ Starting${NC} (tusd:1080)"
+    fi
+else
+    echo -e "${RED}✗ Não disponível${NC}"
+fi
+
 echo ""
 echo -e "${YELLOW}Extensões PHP Instaladas:${NC}"
 echo ""
@@ -209,6 +235,8 @@ echo "  • https://s3.localhost          - MinIO API (S3)"
 echo "  • wss://ws.localhost            - Reverb WebSocket"
 echo "  • https://livekit.localhost     - LiveKit API (WebRTC SFU)"
 echo "  • https://ollama.localhost     - Ollama API (LLM Inference)"
+echo "  • https://whisper.localhost    - Whisper ASR API (OpenAI-compatible)"
+echo "  • https://tusd.localhost       - tusd resumable upload server"
 echo "  • https://meuprojeto.test       - Seu projeto Laravel"
 echo ""
 echo -e "${YELLOW}Portas Locais:${NC}"
@@ -227,5 +255,7 @@ echo "  │ Reverb WS   │ localhost:6001   │ app-id/key/secret in .env   │
 echo "  │ LiveKit API │ localhost:7880   │ devkey / secret             │"
 echo "  │ LiveKit RTC │ localhost:7881   │ TCP + UDP 50000-50100       │"
 echo "  │ Ollama API  │ localhost:11434 │ no auth                     │"
+echo "  │ Whisper ASR │ localhost:9501   │ no auth (OpenAI-compat)     │"
+echo "  │ tusd        │ localhost:1080   │ no auth (S3-backed)         │"
 echo "  └─────────────┴──────────────────┴─────────────────────────────┘"
 echo ""

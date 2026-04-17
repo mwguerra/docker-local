@@ -397,6 +397,41 @@ services:
       - "traefik.http.services.whisper.loadbalancer.server.port=8000"
 
   # ============================================================================
+  # tusd - Resumable upload server (TUS protocol) backed by MinIO/S3
+  # Used for large video uploads (e.g. pcast). Streams chunks directly to S3
+  # without passing through PHP — safe for GB-scale files on flaky connections.
+  # API: http://tusd:1080/files (internal) / http://localhost:1080/files (host)
+  # Docs: https://github.com/tus/tusd
+  # ============================================================================
+  tusd:
+    image: tusproject/tusd:latest
+    container_name: tusd
+    restart: unless-stopped
+    ports:
+      - "${TUSD_PORT:-1080}:1080"
+    command:
+      - "-verbose"
+      - "-host=0.0.0.0"
+      - "-port=1080"
+      - "-base-path=/files/"
+      - "-s3-bucket=${TUSD_S3_BUCKET:-laravel}"
+      - "-s3-endpoint=http://minio:9000"
+      - "-cors-allow-origin=.*"
+      - "-cors-allow-credentials"
+    environment:
+      AWS_ACCESS_KEY_ID: "${MINIO_ROOT_USER:-minio}"
+      AWS_SECRET_ACCESS_KEY: "${MINIO_ROOT_PASSWORD:-minio123}"
+      AWS_REGION: "us-east-1"
+    networks:
+      - laravel-dev
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.tusd.rule=Host(`tusd.localhost`)"
+      - "traefik.http.routers.tusd.entrypoints=websecure"
+      - "traefik.http.routers.tusd.tls=true"
+      - "traefik.http.services.tusd.loadbalancer.server.port=1080"
+
+  # ============================================================================
   # Laravel Reverb - Standalone WebSocket Server (Multi-App Support)
   # Serves all projects simultaneously - each connects with own credentials
   # Apps managed via: docker-local reverb app:add/list/remove

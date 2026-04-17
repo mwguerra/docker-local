@@ -740,6 +740,9 @@ The `stubs/` versions contain placeholders like `{{PROJECT_NAME}}` for automated
 | Traefik Dashboard | `https://traefik.localhost` |
 | Mailpit | `https://mail.localhost` |
 | MinIO Console | `https://minio.localhost` |
+| Ollama API | `https://ollama.localhost` |
+| Whisper ASR | `https://whisper.localhost` |
+| tusd (resumable uploads) | `https://tusd.localhost` |
 
 ### Ports
 
@@ -754,6 +757,9 @@ The `stubs/` versions contain placeholders like `{{PROJECT_NAME}}` for automated
 | MinIO Console | 9001 | Web UI |
 | Mailpit SMTP | 1025 | Email |
 | Mailpit Web | 8025 | Email UI |
+| Ollama | 11434 | Local LLM inference API |
+| Whisper ASR | 9501 | OpenAI-compatible STT API |
+| tusd | 1080 | Resumable uploads (TUS) |
 
 ### Default Credentials
 
@@ -889,6 +895,40 @@ WHISPER_MODEL=base
 WHISPER_LANGUAGE=en
 WHISPER_PORT=9501
 ```
+
+### tusd — Resumable uploads (TUS protocol)
+
+`tusd` is the reference TUS server (Go) for [resumable uploads](https://tus.io/). It accepts chunked HTTP uploads from browsers (Uppy.js, TusUpload, etc.) and streams them directly to MinIO/S3 — no PHP worker in the hot path, safe for GB-scale files on flaky connections.
+
+**Endpoints:**
+```bash
+# Upload endpoint (internal Docker network)
+http://tusd:1080/files/
+
+# Upload endpoint (host / browser)
+http://localhost:1080/files/
+https://tusd.localhost/files/
+```
+
+**Configuration (`.env`):**
+```bash
+TUSD_PORT=1080
+TUSD_S3_BUCKET=laravel       # or a per-project bucket
+```
+
+`tusd` reads S3 credentials from `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` and writes directly to the MinIO container at `http://minio:9000`. On upload completion, the file lives under `s3://$TUSD_S3_BUCKET/<upload-id>` and `<upload-id>.info`.
+
+**Example upload (Uppy.js on the client, nothing server-side):**
+```js
+import Uppy from '@uppy/core'
+import Tus from '@uppy/tus'
+
+new Uppy()
+  .use(Tus, { endpoint: 'http://localhost:1080/files/' })
+  .on('upload-success', (file, { uploadURL }) => { /* save key in your app */ })
+```
+
+For authorized uploads in production, configure tusd hooks (`-hooks-http`) to call a Laravel endpoint that validates the user and allowed bucket prefix before accepting a new upload.
 
 ### Laravel Workers (Horizon, Reverb, Scheduler)
 
